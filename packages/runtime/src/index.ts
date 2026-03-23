@@ -1,13 +1,25 @@
+import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import path from 'node:path';
 
 export type ForgeHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export type ForgeRouteParams = Record<string, string>;
 export type ForgeQueryParams = Record<string, string | string[]>;
 export type ForgeRequestBody = Record<string, string | string[]>;
+export type ForgeViewData = Record<string, ForgeTemplateValue>;
+export type ForgeTemplateValue = string | number | boolean | null | undefined;
 
 export type ForgeRenderHtmlInput = {
   body: string;
+  status?: number;
+  headers?: Record<string, string>;
+};
+
+export type ForgeRenderViewInput = {
+  view: string;
+  data?: ForgeViewData;
+  layout?: string | false;
   status?: number;
   headers?: Record<string, string>;
 };
@@ -65,11 +77,28 @@ export type ForgeRequest = {
 
 export type ForgeResponseHelpers = {
   html(input: string | ForgeRenderHtmlInput): ForgeResponseData;
+  render(view: string, data?: ForgeViewData, options?: ForgeRenderResponseOptions): Promise<ForgeResponseData>;
   redirect(input: string | ForgeRedirectInput): ForgeResponseData;
 };
 
-export function createApp(): ForgeApp {
-  return new ForgeApp();
+export type ForgeViewRendererOptions = {
+  rootDir?: string;
+  viewsDir?: string;
+  defaultLayout?: string | false;
+};
+
+export type ForgeRenderOptions = {
+  data?: ForgeViewData;
+  layout?: string | false;
+};
+
+export type ForgeRenderResponseOptions = ForgeRenderOptions & {
+  status?: number;
+  headers?: Record<string, string>;
+};
+
+export function createApp(options: ForgeViewRendererOptions = {}): ForgeApp {
+  return new ForgeApp(options);
 }
 
 export function route(definition: ForgeRouteDefinition): ForgeRouteDefinition {
@@ -84,20 +113,37 @@ export function redirect(location: string, status = 302): ForgeResponseData {
   return createRedirectResponse({ location, status });
 }
 
+export async function renderView(
+  view: string,
+  options: ForgeViewRendererOptions & ForgeRenderOptions = {},
+): Promise<string> {
+  return createViewRenderer(options).render(view, options.data, options.layout);
+}
+
+export function createViewRenderer(options: ForgeViewRendererOptions = {}): ForgeViewRenderer {
+  return new ForgeViewRenderer(options);
+}
+
 export class ForgeApp {
   private readonly routes: ForgeRegisteredRoute[] = [];
+
+  private readonly viewRenderer: ForgeViewRenderer;
+
+  constructor(options: ForgeViewRendererOptions = {}) {
+    this.viewRenderer = createViewRenderer(options);
+  }
 
   registerRoute(definition: ForgeRouteDefinition): ForgeApp {
     this.routes.push(createRegisteredRoute(definition));
     return this;
   }
 
-  get(path: string, controller: ForgeControllerHandler, name?: string): ForgeApp {
-    return this.registerRoute({ method: 'GET', path, controller, ...(name ? { name } : {}) });
+  get(pathValue: string, controller: ForgeControllerHandler, name?: string): ForgeApp {
+    return this.registerRoute({ method: 'GET', path: pathValue, controller, ...(name ? { name } : {}) });
   }
 
-  post(path: string, controller: ForgeControllerHandler, name?: string): ForgeApp {
-    return this.registerRoute({ method: 'POST', path, controller, ...(name ? { name } : {}) });
+  post(pathValue: string, controller: ForgeControllerHandler, name?: string): ForgeApp {
+    return this.registerRoute({ method: 'POST', path: pathValue, controller, ...(name ? { name } : {}) });
   }
 
   routesList(): ForgeRouteDefinition[] {
@@ -116,7 +162,7 @@ export class ForgeApp {
         return;
       }
 
-      const responseHelpers = createResponseHelpers();
+      const responseHelpers = createResponseHelpers(this.viewRenderer);
       const controllerResponse = await matchedRoute.definition.controller({
         request: {
           ...request,
@@ -151,10 +197,55 @@ export class ForgeApp {
   }
 }
 
+export class ForgeViewRenderer {
+  private readonly viewsRoot: string;
+
+  private readonly defaultLayout: string | false;
+
+  constructor(options: ForgeViewRendererOptions = {}) {
+    const rootDir = options.rootDir ?? process.cwd();
+    this.viewsRoot = path.resolve(rootDir, options.viewsDir ?? 'app/views');
+    this.defaultLayout = options.defaultLayout ?? 'app';
+  }
+
+  async render(view: string, data: ForgeViewData = {}, layout: string | false = this.defaultLayout): Promise<string> {
+    const template = await this.readTemplate(view);
+    const content = await this.renderTemplate(template, view, data);
+
+    if (layout === false) {
+      return content;
+    }
+
+    const layoutTemplate = await this.readTemplate(resolveLayoutName(layout));
+    return this.renderTemplate(layoutTemplate, resolveLayoutName(layout), {
+      ...data,
+      content,
+    });
+  }
+
+  private async renderTemplate(template: string, view: string, data: ForgeViewData): Promise<string> {
+    const withPartials = await replaceAsync(template, PARTIAL_PATTERN, async (_match, partialName: string) => {
+      const partialView = resolvePartialView(view, partialName);
+      const partialTemplate = await this.readTemplate(partialView);
+      return this.renderTemplate(partialTemplate, partialView, data);
+    });
+
+    return withPartials.replace(VARIABLE_PATTERN, (_match, variableName: string) => stringifyTemplateValue(data[variableName]));
+  }
+
+  private async readTemplate(name: string): Promise<string> {
+    const templatePath = path.join(this.viewsRoot, `${normalizeViewName(name)}.html`);
+    return readFile(templatePath, 'utf8');
+  }
+}
+
 type ForgeRegisteredRoute = {
   definition: ForgeRouteDefinition;
   segments: string[];
 };
+
+const PARTIAL_PATTERN = /{{>\s*([A-Za-z0-9_/-]+)\s*}}/g;
+const VARIABLE_PATTERN = /{{\s*([A-Za-z0-9_]+)\s*}}/g;
 
 function createRegisteredRoute(definition: ForgeRouteDefinition): ForgeRegisteredRoute {
   return {
@@ -163,10 +254,18 @@ function createRegisteredRoute(definition: ForgeRouteDefinition): ForgeRegistere
   };
 }
 
-function createResponseHelpers(): ForgeResponseHelpers {
+function createResponseHelpers(viewRenderer: ForgeViewRenderer): ForgeResponseHelpers {
   return {
     html(input) {
       return typeof input === 'string' ? createHtmlResponse({ body: input }) : createHtmlResponse(input);
+    },
+    async render(view, data, options) {
+      const body = await viewRenderer.render(view, data ?? options?.data ?? {}, options?.layout);
+      return createHtmlResponse({
+        body,
+        status: options?.status,
+        headers: options?.headers,
+      });
     },
     redirect(input) {
       return typeof input === 'string'
@@ -269,24 +368,24 @@ function readSearchParams(searchParams: URLSearchParams): Record<string, string 
 function matchRoute(
   routes: ForgeRegisteredRoute[],
   method: string,
-  path: string,
+  pathValue: string,
 ): { definition: ForgeRouteDefinition; params: ForgeRouteParams } | undefined {
-  const requestSegments = splitPath(path);
+  const requestSegments = splitPath(pathValue);
 
-  for (const route of routes) {
-    if (route.definition.method !== method) {
+  for (const routeValue of routes) {
+    if (routeValue.definition.method !== method) {
       continue;
     }
 
-    if (route.segments.length !== requestSegments.length) {
+    if (routeValue.segments.length !== requestSegments.length) {
       continue;
     }
 
     const params: ForgeRouteParams = {};
     let matches = true;
 
-    for (let index = 0; index < route.segments.length; index += 1) {
-      const routeSegment = route.segments[index];
+    for (let index = 0; index < routeValue.segments.length; index += 1) {
+      const routeSegment = routeValue.segments[index];
       const requestSegment = requestSegments[index];
 
       if (routeSegment.startsWith(':')) {
@@ -302,7 +401,7 @@ function matchRoute(
 
     if (matches) {
       return {
-        definition: route.definition,
+        definition: routeValue.definition,
         params,
       };
     }
@@ -311,12 +410,12 @@ function matchRoute(
   return undefined;
 }
 
-function splitPath(path: string): string[] {
-  if (path === '/' || path.length === 0) {
+function splitPath(pathValue: string): string[] {
+  if (pathValue === '/' || pathValue.length === 0) {
     return [];
   }
 
-  return path.split('/').filter((segment) => segment.length > 0);
+  return pathValue.split('/').filter((segment) => segment.length > 0);
 }
 
 function writeNodeResponse(
@@ -330,4 +429,70 @@ function writeNodeResponse(
   }
 
   nodeResponse.end(response.body);
+}
+
+function normalizeViewName(value: string): string {
+  return value.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+}
+
+function resolveLayoutName(layout: string): string {
+  const normalizedLayout = normalizeViewName(layout);
+  return normalizedLayout.startsWith('layouts/') ? normalizedLayout : `layouts/${normalizedLayout}`;
+}
+
+function resolvePartialView(parentView: string, partialName: string): string {
+  const normalizedParent = normalizeViewName(parentView);
+  const normalizedPartial = normalizeViewName(partialName);
+  const directoryName = path.posix.dirname(normalizedParent);
+
+  if (normalizedPartial.includes('/')) {
+    return prefixPartialFilename(normalizedPartial);
+  }
+
+  if (directoryName === '.') {
+    return prefixPartialFilename(normalizedPartial);
+  }
+
+  return `${directoryName}/${prefixPartialFilename(normalizedPartial)}`;
+}
+
+function prefixPartialFilename(value: string): string {
+  const segments = value.split('/');
+  const fileName = segments.pop() ?? value;
+  const partialFileName = fileName.startsWith('_') ? fileName : `_${fileName}`;
+
+  return [...segments, partialFileName].join('/');
+}
+
+function stringifyTemplateValue(value: ForgeTemplateValue): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  return String(value);
+}
+
+async function replaceAsync(
+  value: string,
+  pattern: RegExp,
+  replacer: (...args: string[]) => Promise<string>,
+): Promise<string> {
+  const matches = Array.from(value.matchAll(pattern));
+
+  if (matches.length === 0) {
+    return value;
+  }
+
+  const replacements = await Promise.all(
+    matches.map((match) => replacer(...match.map((entry) => entry ?? ''))),
+  );
+
+  let nextValue = value;
+
+  for (let index = 0; index < matches.length; index += 1) {
+    const matchedText = matches[index][0];
+    nextValue = nextValue.replace(matchedText, replacements[index]);
+  }
+
+  return nextValue;
 }

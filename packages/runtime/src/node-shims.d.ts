@@ -1,3 +1,20 @@
+declare const process: {
+  cwd(): string;
+};
+
+declare module 'node:fs/promises' {
+  export function readFile(path: string, encoding: 'utf8'): Promise<string>;
+}
+
+declare module 'node:path' {
+  export function resolve(...paths: string[]): string;
+  export function join(...paths: string[]): string;
+
+  export const posix: {
+    dirname(path: string): string;
+  };
+}
+
 declare module 'node:http' {
   export type IncomingHttpHeaders = Record<string, string | string[] | undefined>;
 
