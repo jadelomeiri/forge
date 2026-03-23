@@ -37,11 +37,16 @@ declare module 'node:http' {
     end(chunk?: string): this;
   }
 
+  export interface ServerAddressInfo {
+    port: number;
+  }
+
   export interface Server {
     listen(port: number, hostname?: string, backlog?: number, listeningListener?: () => void): this;
     listen(port: number, hostname?: string, listeningListener?: () => void): this;
     listen(port: number, listeningListener?: () => void): this;
     close(callback?: (error?: Error) => void): this;
+    address(): string | ServerAddressInfo | null;
   }
 
   export function createServer(

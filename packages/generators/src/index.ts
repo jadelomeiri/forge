@@ -55,6 +55,7 @@ export type ForgeGenerateScaffoldResult = {
   routesPath: string;
   manifestPath: string;
   testFilePath: string;
+  testFilePaths: string[];
 };
 
 type ForgeScaffoldResource = {
@@ -107,7 +108,10 @@ export async function generateScaffold(
   const viewsRoot = path.join(options.projectRoot, 'app/views', resource.collectionPath);
   const routesPath = path.join(options.projectRoot, 'config/routes.ts');
   const manifestPath = path.join(options.projectRoot, '.forge/manifest.json');
-  const testFilePath = path.join(options.projectRoot, 'tests/integration', `${resource.controllerFileName}-controller.test.ts`);
+  const unitTestFilePath = path.join(options.projectRoot, 'tests/unit', `${resource.modelFileBasename}.model.test.ts`);
+  const integrationTestFilePath = path.join(options.projectRoot, 'tests/integration', `${resource.controllerFileName}-controller.test.ts`);
+  const e2eTestFilePath = path.join(options.projectRoot, 'tests/e2e', `${resource.controllerFileName}-smoke.test.ts`);
+  const testFilePaths = [unitTestFilePath, integrationTestFilePath, e2eTestFilePath];
   const viewPaths = [
     path.join(viewsRoot, 'index.html'),
     path.join(viewsRoot, 'show.html'),
@@ -118,7 +122,9 @@ export async function generateScaffold(
 
   await mkdir(path.dirname(controllerFilePath), { recursive: true });
   await mkdir(viewsRoot, { recursive: true });
-  await mkdir(path.dirname(testFilePath), { recursive: true });
+  await mkdir(path.join(options.projectRoot, 'tests/unit'), { recursive: true });
+  await mkdir(path.dirname(integrationTestFilePath), { recursive: true });
+  await mkdir(path.dirname(e2eTestFilePath), { recursive: true });
 
   await writeFile(controllerFilePath, renderScaffoldControllerFile(resource), 'utf8');
   await writeFile(viewPaths[0], renderScaffoldIndexView(resource), 'utf8');
@@ -126,7 +132,9 @@ export async function generateScaffold(
   await writeFile(viewPaths[2], renderScaffoldNewView(), 'utf8');
   await writeFile(viewPaths[3], renderScaffoldEditView(), 'utf8');
   await writeFile(viewPaths[4], renderScaffoldFormPartial(resource), 'utf8');
-  await writeFile(testFilePath, renderScaffoldTestFile(resource), 'utf8');
+  await writeFile(unitTestFilePath, renderScaffoldModelTestFile(resource), 'utf8');
+  await writeFile(integrationTestFilePath, renderScaffoldIntegrationTestFile(resource), 'utf8');
+  await writeFile(e2eTestFilePath, renderScaffoldE2ETestFile(resource), 'utf8');
 
   await updateRoutesFile(routesPath, resource.routes);
   await updateScaffoldManifestFile(manifestPath, resource);
@@ -138,7 +146,8 @@ export async function generateScaffold(
     viewPaths,
     routesPath,
     manifestPath,
-    testFilePath,
+    testFilePath: integrationTestFilePath,
+    testFilePaths,
   };
 }
 
@@ -206,7 +215,7 @@ export function renderScaffoldControllerFile(resource: ForgeScaffoldResource): s
   return [
     "import type { ForgeControllerContext, ForgeValidationResult } from '@forge/runtime';",
     "import { validateResourceInput } from '@forge/runtime';",
-    `import { ${resource.modelName} } from '../models/${resource.modelFileBasename}.model';`,
+    `import { ${resource.modelName} } from '../models/${resource.modelFileBasename}.model.ts';`,
     '',
     `export class ${resource.controllerClassName} {`,
     '  async index({ response }: ForgeControllerContext) {',
@@ -371,37 +380,201 @@ export function renderScaffoldFormPartial(resource: ForgeScaffoldResource): stri
   ].join('\n');
 }
 
-export function renderScaffoldTestFile(resource: ForgeScaffoldResource): string {
+export function renderScaffoldModelTestFile(resource: ForgeScaffoldResource): string {
+  const requiredField = resource.fields.find((field) => field.required) ?? resource.fields[0];
+  const successEntries = resource.fields.map((field) => {
+    if (field.required) {
+      return `      ${field.name}: ${renderTestInputValue(field, `Example ${humanize(field.name)}`)},`;
+    }
+
+    return null;
+  }).filter((line): line is string => line !== null);
+  const expectedValueLines = resource.fields.map((field) => {
+    const provided = field.required;
+
+    if (provided) {
+      return `      ${field.name}: ${renderExpectedValue(field, `Example ${humanize(field.name)}`)},`;
+    }
+
+    if (field.default !== undefined) {
+      return `      ${field.name}: ${renderExpectedLiteral(field.default)},`;
+    }
+
+    if (field.type === 'boolean') {
+      return `      ${field.name}: false,`;
+    }
+
+    return null;
+  }).filter((line): line is string => line !== null);
+
   return [
     "import test from 'node:test';",
     "import assert from 'node:assert/strict';",
     '',
-    `import { ${resource.controllerClassName} } from '../../app/controllers/${resource.controllerFileName}.controller.ts';`,
-    `import { routes } from '../../config/routes.ts';`,
+    `import { ${resource.modelName} } from '../../app/models/${resource.modelFileBasename}.model.ts';`,
+    "import { validateResourceInput } from '@forge/runtime';",
     '',
-    `test('${resource.controllerClassName} exposes the standard scaffold actions', () => {`,
-    `  const controller = new ${resource.controllerClassName}();`,
+    `test('${resource.modelName} validation rejects blank ${requiredField.name}', () => {`,
+    `  const result = validateResourceInput(${resource.modelName}, { ${requiredField.name}: '' });`,
     '',
-    "  assert.equal(typeof controller.index, 'function');",
-    "  assert.equal(typeof controller.show, 'function');",
-    "  assert.equal(typeof controller.new, 'function');",
-    "  assert.equal(typeof controller.create, 'function');",
-    "  assert.equal(typeof controller.edit, 'function');",
-    "  assert.equal(typeof controller.update, 'function');",
-    "  assert.equal(typeof controller.delete, 'function');",
+    '  assert.equal(result.valid, false);',
+    `  assert.deepEqual(result.errors.${requiredField.name}, ['${capitalize(humanize(requiredField.name))} is required.']);`,
     '});',
     '',
-    `test('${resource.routeBaseName} scaffold routes are registered', () => {`,
-    '  const routeNames = routes',
-    `    .filter((route) => route.name.startsWith('${resource.routeBaseName}.'))`,
-    '    .map((route) => route.name);',
+    `test('${resource.modelName} validation applies the current scaffold defaults', () => {`,
+    `  const result = validateResourceInput(${resource.modelName}, {`,
+    ...successEntries,
+    '  });',
     '',
-    '  assert.deepEqual(routeNames, [',
-    ...resource.routes.map((route) => `    '${route.name}',`),
-    '  ]);',
+    '  assert.deepEqual(result, {',
+    '    valid: true,',
+    '    values: {',
+    ...expectedValueLines,
+    '    },',
+    '    errors: {},',
+    '  });',
     '});',
     '',
   ].join('\n');
+}
+
+export function renderScaffoldIntegrationTestFile(resource: ForgeScaffoldResource): string {
+  const requiredField = resource.fields.find((field) => field.required) ?? resource.fields[0];
+  const optionalField = resource.fields.find((field) => field.name !== requiredField.name) ?? requiredField;
+  const validBodyEntries = resource.fields.map((field) => {
+    if (field.required) {
+      return `      ${field.name}: ${renderFormEncodedValue(field, `Example ${humanize(field.name)}`)},`;
+    }
+
+    if (field.type === 'boolean') {
+      return `      ${field.name}: 'true',`;
+    }
+
+    if (field.type === 'integer' || field.type === 'decimal') {
+      return `      ${field.name}: '7',`;
+    }
+
+    return `      ${field.name}: '${humanize(field.name)} value',`;
+  });
+
+  return [
+    "import test from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    '',
+    "import { ForgeApp, registerRoutesFromConfig } from '@forge/runtime';",
+    `import { ${resource.controllerClassName} } from '../../app/controllers/${resource.controllerFileName}.controller.ts';`,
+    "import { routes } from '../../config/routes.ts';",
+    '',
+    `test('${resource.controllerClassName} handles the scaffold happy path and validation errors', async () => {`,
+    "  const app = new ForgeApp({ rootDir: process.cwd() });",
+    `  await registerRoutesFromConfig(app, routes, { controllers: { ${resource.controllerClassName} } });`,
+    "  const server = await app.boot({ port: 0 });",
+    '',
+    '  try {',
+    `    const indexResponse = await fetch(\`http://\${server.host}:\${server.port}${resource.basePath}\`);`,
+    `    const newResponse = await fetch(\`http://\${server.host}:\${server.port}${resource.basePath}/new\`);`,
+    `    const invalidCreateResponse = await fetch(\`http://\${server.host}:\${server.port}${resource.basePath}\`, {`,
+    "      method: 'POST',",
+    "      headers: { 'content-type': 'application/x-www-form-urlencoded' },",
+    `      body: new URLSearchParams({ ${requiredField.name}: '', ${optionalField.name}: '${humanize(optionalField.name)} draft' }),`,
+    '    });',
+    `    const showResponse = await fetch(\`http://\${server.host}:\${server.port}${resource.basePath}/42\`);`,
+    `    const validCreateResponse = await fetch(\`http://\${server.host}:\${server.port}${resource.basePath}\`, {`,
+    "      method: 'POST',",
+    "      headers: { 'content-type': 'application/x-www-form-urlencoded' },",
+    '      redirect: "manual",',
+    '      body: new URLSearchParams({',
+    ...validBodyEntries,
+    '      }),',
+    '    });',
+    '',
+    '    assert.equal(indexResponse.status, 200);',
+    `    assert.match(await indexResponse.text(), /New ${resource.singularTitle}/);`,
+    '',
+    '    assert.equal(newResponse.status, 200);',
+    `    assert.match(await newResponse.text(), /Create ${resource.singularTitle}/);`,
+    '',
+    '    assert.equal(invalidCreateResponse.status, 422);',
+    `    assert.match(await invalidCreateResponse.text(), /${capitalize(humanize(requiredField.name))} is required\./);`,
+    '',
+    '    assert.equal(showResponse.status, 200);',
+    '    assert.match(await showResponse.text(), /ID: 42/);',
+    '',
+    '    assert.equal(validCreateResponse.status, 302);',
+    `    assert.equal(validCreateResponse.headers.get('location'), '${resource.basePath}');`,
+    '  } finally {',
+    '    await server.close();',
+    '  }',
+    '});',
+    '',
+  ].join('\n');
+}
+
+export function renderScaffoldE2ETestFile(resource: ForgeScaffoldResource): string {
+  return [
+    "import test from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    '',
+    "import { ForgeApp, registerRoutesFromConfig } from '@forge/runtime';",
+    `import { ${resource.controllerClassName} } from '../../app/controllers/${resource.controllerFileName}.controller.ts';`,
+    "import { routes } from '../../config/routes.ts';",
+    '',
+    `test('${resource.routeBaseName} scaffold smoke test', async () => {`,
+    "  const app = new ForgeApp({ rootDir: process.cwd() });",
+    `  await registerRoutesFromConfig(app, routes, { controllers: { ${resource.controllerClassName} } });`,
+    "  const server = await app.boot({ port: 0 });",
+    '',
+    '  try {',
+    `    const response = await fetch(\`http://\${server.host}:\${server.port}${resource.basePath}\`);`,
+    '',
+    '    assert.equal(response.status, 200);',
+    `    assert.match(await response.text(), /${resource.collectionTitle}/);`,
+    '  } finally {',
+    '    await server.close();',
+    '  }',
+    '});',
+    '',
+  ].join('\n');
+}
+
+export function renderScaffoldTestFile(resource: ForgeScaffoldResource): string {
+  return renderScaffoldIntegrationTestFile(resource);
+}
+
+function renderTestInputValue(field: ForgeScaffoldField, fallbackText: string): string {
+  if (field.type === 'boolean') {
+    return "'true'";
+  }
+
+  if (field.type === 'integer' || field.type === 'decimal') {
+    return "'7'";
+  }
+
+  return `'${fallbackText}'`;
+}
+
+function renderFormEncodedValue(field: ForgeScaffoldField, fallbackText: string): string {
+  return renderTestInputValue(field, fallbackText);
+}
+
+function renderExpectedValue(field: ForgeScaffoldField, fallbackText: string): string {
+  if (field.type === 'boolean') {
+    return 'true';
+  }
+
+  if (field.type === 'integer' || field.type === 'decimal') {
+    return '7';
+  }
+
+  return `'${fallbackText}'`;
+}
+
+function renderExpectedLiteral(value: string | boolean | number): string {
+  if (typeof value === 'string') {
+    return `'${value}'`;
+  }
+
+  return String(value);
 }
 
 export function renderRoutesConfigBlock(routes: ForgeManifestRoute[]): string {
@@ -699,6 +872,10 @@ function resolveInputType(type: ForgePrimitiveFieldType): string {
 
 function toFileBasename(modelName: string): string {
   return modelName.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+}
+
+function capitalize(value: string): string {
+  return value.length === 0 ? value : value[0].toUpperCase() + value.slice(1);
 }
 
 function humanize(value: string): string {

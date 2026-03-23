@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -11,12 +13,18 @@ import {
   parseModelMetadata,
   renderModelFile,
   renderScaffoldControllerFile,
+  renderScaffoldE2ETestFile,
   renderScaffoldFormPartial,
   renderScaffoldEditView,
   renderScaffoldIndexView,
+  renderScaffoldIntegrationTestFile,
+  renderScaffoldModelTestFile,
   renderScaffoldNewView,
   renderScaffoldShowView,
 } from './index.js';
+
+const execFileAsync = promisify(execFile);
+const repositoryRoot = path.resolve(process.cwd(), '../..');
 
 test('parseModelFields supports primitive name:type pairs', () => {
   assert.deepEqual(parseModelFields(['title:string', 'body:text', 'published:boolean']), [
@@ -107,24 +115,11 @@ test('generateModel writes the model file, appends schema, and updates the manif
   assert.deepEqual(manifest.models, ['Post']);
 });
 
-test('generateScaffold writes validation-aware controller, views, routes metadata, tests, and manifest entries', async () => {
+test('generateScaffold writes validation-aware controller, views, routes metadata, generated tests, and manifest entries', async () => {
   const projectRoot = await createProject('forge-scaffold-generator-');
   const resource = buildPostResource();
 
-  await writeFile(
-    path.join(projectRoot, 'app/models/post.model.ts'),
-    [
-      "import { defineModel, field } from '@forge/core';",
-      '',
-      "export const Post = defineModel('Post', {",
-      '  title: field.string({ required: true }),',
-      "  body: field.text({ default: 'Draft body' }),",
-      '  published: field.boolean({ default: false }),',
-      '});',
-      '',
-    ].join('\n'),
-    'utf8',
-  );
+  await writePostModel(projectRoot);
 
   const result = await generateScaffold({
     projectRoot,
@@ -133,6 +128,11 @@ test('generateScaffold writes validation-aware controller, views, routes metadat
 
   assert.equal(result.resourceName, 'Post');
   assert.equal(result.controllerClassName, 'PostsController');
+  assert.deepEqual(result.testFilePaths, [
+    path.join(projectRoot, 'tests/unit/post.model.test.ts'),
+    path.join(projectRoot, 'tests/integration/posts-controller.test.ts'),
+    path.join(projectRoot, 'tests/e2e/posts-smoke.test.ts'),
+  ]);
 
   const controllerFile = await readFile(path.join(projectRoot, 'app/controllers/posts.controller.ts'), 'utf8');
   assert.equal(controllerFile, renderScaffoldControllerFile(resource));
@@ -151,7 +151,7 @@ test('generateScaffold writes validation-aware controller, views, routes metadat
   assert.match(routesConfig, /name: 'posts.edit'/);
   assert.match(routesConfig, /name: 'posts.update'/);
   assert.match(routesConfig, /name: 'posts.delete'/);
-  assert.equal(routesConfig.includes(',,'), false);
+  assert.equal(routesConfig.includes(',,') , false);
 
   const manifest = JSON.parse(await readFile(path.join(projectRoot, '.forge/manifest.json'), 'utf8'));
   assert.deepEqual(manifest.controllers, ['PostsController']);
@@ -161,9 +161,42 @@ test('generateScaffold writes validation-aware controller, views, routes metadat
     ['home.index', 'posts.index', 'posts.new', 'posts.create', 'posts.show', 'posts.edit', 'posts.update', 'posts.delete'],
   );
 
-  const generatedTest = await readFile(path.join(projectRoot, 'tests/integration/posts-controller.test.ts'), 'utf8');
-  assert.match(generatedTest, /PostsController exposes the standard scaffold actions/);
-  assert.match(generatedTest, /posts\.scaffold routes are registered|posts scaffold routes are registered/);
+  assert.equal(
+    await readFile(path.join(projectRoot, 'tests/unit/post.model.test.ts'), 'utf8'),
+    renderScaffoldModelTestFile(resource),
+  );
+  assert.equal(
+    await readFile(path.join(projectRoot, 'tests/integration/posts-controller.test.ts'), 'utf8'),
+    renderScaffoldIntegrationTestFile(resource),
+  );
+  assert.equal(
+    await readFile(path.join(projectRoot, 'tests/e2e/posts-smoke.test.ts'), 'utf8'),
+    renderScaffoldE2ETestFile(resource),
+  );
+});
+
+test('generated scaffold tests run against the current runtime behavior', async () => {
+  const projectRoot = await createProject('forge-generated-tests-');
+
+  await writePostModel(projectRoot);
+  await generateScaffold({ projectRoot, name: 'Post' });
+  await linkForgePackages(projectRoot);
+
+  const childEnv = { ...process.env };
+  delete childEnv.NODE_TEST_CONTEXT;
+  delete childEnv.NODE_TEST_WORKER_ID;
+
+  const { stdout, stderr } = await execFileAsync('node', [
+    '--test',
+    'tests/unit/post.model.test.ts',
+    'tests/integration/posts-controller.test.ts',
+    'tests/e2e/posts-smoke.test.ts',
+  ], {
+    cwd: projectRoot,
+    env: childEnv,
+  });
+
+  assert.match(`${stdout}\n${stderr}`, /# pass 4/);
 });
 
 function buildPostResource() {
@@ -202,11 +235,16 @@ async function createProject(prefix: string): Promise<string> {
 
   await mkdir(path.join(projectRoot, 'app/models'), { recursive: true });
   await mkdir(path.join(projectRoot, 'app/controllers'), { recursive: true });
+  await mkdir(path.join(projectRoot, 'app/views/home'), { recursive: true });
   await mkdir(path.join(projectRoot, 'app/views/layouts'), { recursive: true });
   await mkdir(path.join(projectRoot, 'config'), { recursive: true });
   await mkdir(path.join(projectRoot, 'db'), { recursive: true });
   await mkdir(path.join(projectRoot, '.forge'), { recursive: true });
+  await mkdir(path.join(projectRoot, 'tests/unit'), { recursive: true });
   await mkdir(path.join(projectRoot, 'tests/integration'), { recursive: true });
+  await mkdir(path.join(projectRoot, 'tests/e2e'), { recursive: true });
+
+  await writeFile(path.join(projectRoot, 'package.json'), JSON.stringify({ name: 'generated-app', type: 'module' }, null, 2) + '\n');
 
   await writeFile(path.join(projectRoot, 'db/schema.prisma'), [
     'generator client {',
@@ -232,6 +270,10 @@ async function createProject(prefix: string): Promise<string> {
     '',
   ].join('\n'));
 
+  await writeFile(path.join(projectRoot, 'app/views/layouts/app.html'), '<body>{{content}}</body>\n', 'utf8');
+  await writeFile(path.join(projectRoot, 'app/views/layouts/auth.html'), '<body>{{content}}</body>\n', 'utf8');
+  await writeFile(path.join(projectRoot, 'app/views/home/index.html'), '<main><h1>Home</h1></main>\n', 'utf8');
+
   await writeFile(
     path.join(projectRoot, '.forge/manifest.json'),
     JSON.stringify(
@@ -256,4 +298,30 @@ async function createProject(prefix: string): Promise<string> {
   );
 
   return projectRoot;
+}
+
+async function writePostModel(projectRoot: string): Promise<void> {
+  await writeFile(
+    path.join(projectRoot, 'app/models/post.model.ts'),
+    [
+      "import { defineModel, field } from '@forge/core';",
+      '',
+      "export const Post = defineModel('Post', {",
+      '  title: field.string({ required: true }),',
+      "  body: field.text({ default: 'Draft body' }),",
+      '  published: field.boolean({ default: false }),',
+      '});',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+}
+
+async function linkForgePackages(projectRoot: string): Promise<void> {
+  const scopeRoot = path.join(projectRoot, 'node_modules', '@forge');
+  await mkdir(scopeRoot, { recursive: true });
+
+  for (const packageName of ['core', 'runtime']) {
+    await symlink(path.join(repositoryRoot, 'packages', packageName), path.join(scopeRoot, packageName), 'dir');
+  }
 }
