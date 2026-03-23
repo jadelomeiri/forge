@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/runtime" },
+    { "path": "./packages/manifest" },
+    { "path": "./packages/templates" },
+    { "path": "./packages/generators" },
+    { "path": "./packages/cli" },
+    { "path": "./packages/docs" },
+    { "path": "./packages/create-forge-app" }
+  ]
+}
