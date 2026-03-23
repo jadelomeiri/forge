@@ -1,0 +1,24 @@
+{
+  "name": "@forge/generators",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@forge/core": "0.0.0",
+    "@forge/manifest": "0.0.0",
+    "@forge/templates": "0.0.0"
+  },
+  "references": [
+    { "path": "../core" },
+    { "path": "../manifest" },
+    { "path": "../templates" }
+  ]
+}

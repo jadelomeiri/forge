@@ -1,0 +1,29 @@
+{
+  "name": "@forge/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@forge/core": "0.0.0",
+    "@forge/generators": "0.0.0",
+    "@forge/manifest": "0.0.0",
+    "@forge/runtime": "0.0.0"
+  },
+  "bin": {
+    "forge": "./dist/index.js"
+  },
+  "references": [
+    { "path": "../core" },
+    { "path": "../generators" },
+    { "path": "../manifest" },
+    { "path": "../runtime" }
+  ]
+}
