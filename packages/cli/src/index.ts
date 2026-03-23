@@ -7,7 +7,7 @@ declare const process: {
 };
 
 import { createForgeApp } from '@forge/create-forge-app';
-import { generateModel } from '@forge/generators';
+import { generateModel, generateScaffold } from '@forge/generators';
 import { parseCommand, renderCommandHelp } from './commands.js';
 
 type CommandHelpName = Parameters<typeof renderCommandHelp>[0];
@@ -31,6 +31,10 @@ export function run(argv: string[] = process.argv.slice(2)): number | Promise<nu
 
   if (result.command.name === 'generate model') {
     return runGenerateModelCommand(result.command.args);
+  }
+
+  if (result.command.name === 'generate scaffold') {
+    return runGenerateScaffoldCommand(result.command.args);
   }
 
   console.log(renderStubMessage(result.command.name, result.command.args));
@@ -69,6 +73,44 @@ async function runGenerateModelCommand(args: string[]): Promise<number> {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     console.error(`Failed to generate model: ${message}`);
+    return 1;
+  }
+}
+
+async function runGenerateScaffoldCommand(args: string[]): Promise<number> {
+  const [name, ...extraArgs] = args;
+
+  if (!name) {
+    console.error('Missing scaffold name.\n\n' + renderCommandHelp('generate scaffold'));
+    return 1;
+  }
+
+  if (extraArgs.length > 0) {
+    console.error(`Unexpected arguments: ${extraArgs.join(', ')}\n\n${renderCommandHelp('generate scaffold')}`);
+    return 1;
+  }
+
+  try {
+    const result = await generateScaffold({
+      projectRoot: process.cwd(),
+      name,
+    });
+
+    console.log([
+      `Generated scaffold: ${result.resourceName}`,
+      `Controller: ${result.controllerFilePath}`,
+      `Routes: ${result.routesPath}`,
+      `Manifest: ${result.manifestPath}`,
+      `Test: ${result.testFilePath}`,
+      '',
+      'Views:',
+      ...result.viewPaths.map((viewPath) => `- ${viewPath}`),
+    ].join('\n'));
+
+    return 0;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`Failed to generate scaffold: ${message}`);
     return 1;
   }
 }
