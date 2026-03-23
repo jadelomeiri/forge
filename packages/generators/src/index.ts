@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { ForgePrimitiveFieldType } from '@forge/core';
+import type { ForgeModelMetadata, ForgePrimitiveFieldType } from '@forge/core';
 import {
   addControllerToManifest,
   addModelToManifest,
@@ -19,6 +19,13 @@ const SUPPORTED_FIELD_TYPES = ['string', 'text', 'boolean', 'integer', 'decimal'
 export type ForgeModelFieldInput = {
   name: string;
   type: ForgePrimitiveFieldType;
+};
+
+export type ForgeScaffoldField = {
+  name: string;
+  type: ForgePrimitiveFieldType;
+  required: boolean;
+  default?: string | boolean | number;
 };
 
 export type ForgeGenerateModelOptions = {
@@ -52,6 +59,8 @@ export type ForgeGenerateScaffoldResult = {
 
 type ForgeScaffoldResource = {
   modelName: string;
+  modelFileBasename: string;
+  fields: ForgeScaffoldField[];
   collectionPath: string;
   controllerClassName: string;
   controllerFileName: string;
@@ -89,7 +98,7 @@ export async function generateModel(options: ForgeGenerateModelOptions): Promise
 export async function generateScaffold(
   options: ForgeGenerateScaffoldOptions,
 ): Promise<ForgeGenerateScaffoldResult> {
-  const resource = normalizeScaffoldName(options.name);
+  const resource = await normalizeScaffoldName(options.projectRoot, options.name);
   const controllerFilePath = path.join(
     options.projectRoot,
     'app/controllers',
@@ -192,9 +201,12 @@ export function renderScaffoldControllerFile(resource: ForgeScaffoldResource): s
   const showEditPath = `${showRecordPath}/edit`;
   const showDeletePath = `${showRecordPath}/delete`;
   const showUpdatePath = `${showRecordPath}/update`;
+  const formValueLines = resource.fields.flatMap((field) => renderControllerFormValueLines(field));
 
   return [
-    "import type { ForgeControllerContext } from '@forge/runtime';",
+    "import type { ForgeControllerContext, ForgeValidationResult } from '@forge/runtime';",
+    "import { validateResourceInput } from '@forge/runtime';",
+    `import { ${resource.modelName} } from '../models/${resource.modelFileBasename}.model';`,
     '',
     `export class ${resource.controllerClassName} {`,
     '  async index({ response }: ForgeControllerContext) {',
@@ -207,7 +219,7 @@ export function renderScaffoldControllerFile(resource: ForgeScaffoldResource): s
     '  }',
     '',
     '  async show({ request, response }: ForgeControllerContext) {',
-    '    const id = request.params.id ?? \'\';',
+    "    const id = request.params.id ?? '';",
     '',
     `    return response.render('${resource.viewPrefix}/show', {`,
     `      pageTitle: '${resource.singularTitle}',`,
@@ -219,39 +231,82 @@ export function renderScaffoldControllerFile(resource: ForgeScaffoldResource): s
     '  }',
     '',
     '  async new({ response }: ForgeControllerContext) {',
-    `    return response.render('${resource.viewPrefix}/new', {`,
+    `    return response.render('${resource.viewPrefix}/new', this.buildFormData({`,
     `      pageTitle: 'New ${resource.singularTitle}',`,
     `      heading: 'New ${resource.singularTitle}',`,
     `      formAction: '${resource.basePath}',`,
     `      submitLabel: 'Create ${resource.singularTitle}',`,
-    '      name: \'\',',
-    '    });',
+    '    }));',
     '  }',
     '',
-    '  async create({ response }: ForgeControllerContext) {',
+    '  async create({ request, response }: ForgeControllerContext) {',
+    `    const validation = validateResourceInput(${resource.modelName}, request.body);`,
+    '',
+    '    if (!validation.valid) {',
+    `      return response.render('${resource.viewPrefix}/new', this.buildFormData({`,
+    `        pageTitle: 'New ${resource.singularTitle}',`,
+    `        heading: 'New ${resource.singularTitle}',`,
+    `        formAction: '${resource.basePath}',`,
+    `        submitLabel: 'Create ${resource.singularTitle}',`,
+    '      }, validation), { status: 422 });',
+    '    }',
+    '',
     `    return response.redirect('${resource.basePath}');`,
     '  }',
     '',
     '  async edit({ request, response }: ForgeControllerContext) {',
-    '    const id = request.params.id ?? \'\';',
+    "    const id = request.params.id ?? '';",
     '',
-    `    return response.render('${resource.viewPrefix}/edit', {`,
+    `    return response.render('${resource.viewPrefix}/edit', this.buildFormData({`,
     `      pageTitle: 'Edit ${resource.singularTitle}',`,
     `      heading: 'Edit ${resource.singularTitle}',`,
     '      id,',
     `      formAction: \`${showUpdatePath}\`,`,
     `      submitLabel: 'Update ${resource.singularTitle}',`,
-    '      name: \'\',',
-    '    });',
+    '    }));',
     '  }',
     '',
     '  async update({ request, response }: ForgeControllerContext) {',
-    '    const id = request.params.id ?? \'\';',
+    "    const id = request.params.id ?? '';",
+    `    const validation = validateResourceInput(${resource.modelName}, request.body);`,
+    '',
+    '    if (!validation.valid) {',
+    `      return response.render('${resource.viewPrefix}/edit', this.buildFormData({`,
+    `        pageTitle: 'Edit ${resource.singularTitle}',`,
+    `        heading: 'Edit ${resource.singularTitle}',`,
+    '        id,',
+    `        formAction: \`${showUpdatePath}\`,`,
+    `        submitLabel: 'Update ${resource.singularTitle}',`,
+    '      }, validation), { status: 422 });',
+    '    }',
+    '',
     `    return response.redirect(\`${showRecordPath}\`);`,
     '  }',
     '',
     '  async delete({ response }: ForgeControllerContext) {',
     `    return response.redirect('${resource.basePath}');`,
+    '  }',
+    '',
+    "  private buildFormData(baseData: Record<string, string>, validation?: ForgeValidationResult) {",
+    '    const values = validation?.values ?? {};',
+    '    const errors = validation?.errors ?? {};',
+    '',
+    '    return {',
+    '      ...baseData,',
+    "      errorsHeading: validation ? 'Please correct the errors below.' : '',",
+    "      errorsSummary: validation ? this.renderErrorsSummary(errors) : '',",
+    ...formValueLines,
+    '    };',
+    '  }',
+    '',
+    "  private renderErrorsSummary(errors: ForgeValidationResult['errors']) {",
+    '    const messages = Object.values(errors).flat();',
+    '',
+    '    if (messages.length === 0) {',
+    "      return '';",
+    '    }',
+    '',
+    "    return ['<ul>', ...messages.map((message) => `  <li>${message}</li>`), '</ul>'].join('\\n');",
     '  }',
     '}',
     '',
@@ -307,10 +362,9 @@ export function renderScaffoldEditView(): string {
 export function renderScaffoldFormPartial(resource: ForgeScaffoldResource): string {
   return [
     '<form method="POST" action="{{formAction}}">',
-    '  <label>',
-    `    ${resource.singularTitle} name`,
-    '    <input type="text" name="name" value="{{name}}">',
-    '  </label>',
+    '  <div>{{errorsHeading}}</div>',
+    '  <div>{{errorsSummary}}</div>',
+    ...resource.fields.flatMap((field) => renderFormFieldTemplate(resource, field)),
     '  <button type="submit">{{submitLabel}}</button>',
     '</form>',
     '',
@@ -338,7 +392,7 @@ export function renderScaffoldTestFile(resource: ForgeScaffoldResource): string 
     '});',
     '',
     `test('${resource.routeBaseName} scaffold routes are registered', () => {`,
-    `  const routeNames = routes`,
+    '  const routeNames = routes',
     `    .filter((route) => route.name.startsWith('${resource.routeBaseName}.'))`,
     '    .map((route) => route.name);',
     '',
@@ -362,6 +416,37 @@ export function renderRoutesConfigBlock(routes: ForgeManifestRoute[]): string {
       '  },',
     ].join('\n'))
     .join('\n');
+}
+
+export function parseModelMetadata(modelSource: string, modelName: string): ForgeModelMetadata {
+  const lines = modelSource.split('\n');
+  const startIndex = lines.findIndex((line) => line.includes(`defineModel('${modelName}', {`));
+
+  if (startIndex === -1) {
+    throw new Error(`Could not find defineModel('${modelName}', { ... }) in model source.`);
+  }
+
+  const fields: ForgeScaffoldField[] = [];
+
+  for (const line of lines.slice(startIndex + 1)) {
+    const trimmedLine = line.trim();
+
+    if (trimmedLine === '});') {
+      break;
+    }
+
+    if (trimmedLine.length === 0) {
+      continue;
+    }
+
+    fields.push(parseScaffoldFieldLine(trimmedLine));
+  }
+
+  return {
+    kind: 'model',
+    name: modelName,
+    fields,
+  };
 }
 
 async function updateSchemaFile(schemaPath: string, modelName: string, fields: ForgeModelFieldInput[]): Promise<void> {
@@ -425,7 +510,7 @@ function normalizeModelName(modelName: string): string {
   return trimmedModelName;
 }
 
-function normalizeScaffoldName(name: string): ForgeScaffoldResource {
+async function normalizeScaffoldName(projectRoot: string, name: string): Promise<ForgeScaffoldResource> {
   const modelName = normalizeModelName(name);
   const pluralName = pluralize(modelName);
   const collectionPath = pluralize(toFileBasename(modelName));
@@ -434,6 +519,8 @@ function normalizeScaffoldName(name: string): ForgeScaffoldResource {
   const basePath = `/${collectionPath}`;
   const singularTitle = humanize(modelName);
   const collectionTitle = humanize(pluralName);
+  const modelFileBasename = toFileBasename(modelName);
+  const fields = await loadScaffoldFields(projectRoot, modelName, modelFileBasename);
 
   const routes: ForgeManifestRoute[] = [
     { name: `${routeBaseName}.index`, method: 'GET', path: basePath, controller: controllerClassName, action: 'index' },
@@ -447,6 +534,8 @@ function normalizeScaffoldName(name: string): ForgeScaffoldResource {
 
   return {
     modelName,
+    modelFileBasename,
+    fields,
     collectionPath,
     controllerClassName,
     controllerFileName: collectionPath,
@@ -467,12 +556,153 @@ function normalizeScaffoldName(name: string): ForgeScaffoldResource {
   };
 }
 
+async function loadScaffoldFields(projectRoot: string, modelName: string, modelFileBasename: string): Promise<ForgeScaffoldField[]> {
+  const modelFilePath = path.join(projectRoot, 'app/models', `${modelFileBasename}.model.ts`);
+  const modelSource = await readFile(modelFilePath, 'utf8');
+  const metadata = parseModelMetadata(modelSource, modelName);
+
+  if (metadata.fields.length === 0) {
+    throw new Error(`Model ${modelName} does not define any fields to scaffold.`);
+  }
+
+  return metadata.fields.map((field) => ({
+    name: field.name,
+    type: field.type,
+    required: field.required,
+    ...(field.default !== undefined ? { default: field.default } : {}),
+  }));
+}
+
+function parseScaffoldFieldLine(line: string): ForgeScaffoldField {
+  const match = line.match(/^(\w+):\s*field\.(string|text|boolean|integer|decimal|date)\(([^)]*)\),?$/);
+
+  if (!match) {
+    throw new Error(`Unsupported model field definition for scaffolding: ${line}`);
+  }
+
+  const [, name, type, rawOptions] = match;
+  const options = rawOptions.trim();
+
+  return {
+    name,
+    type: type as ForgePrimitiveFieldType,
+    required: /required:\s*true/.test(options),
+    ...parseDefaultOption(options),
+  };
+}
+
+function parseDefaultOption(options: string): { default?: string | boolean | number } {
+  const match = options.match(/default:\s*([^,}]+)/);
+
+  if (!match) {
+    return {};
+  }
+
+  const value = match[1].trim();
+
+  if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) {
+    return { default: value.slice(1, -1) };
+  }
+
+  if (value === 'true') {
+    return { default: true };
+  }
+
+  if (value === 'false') {
+    return { default: false };
+  }
+
+  const numericValue = Number(value);
+
+  if (!Number.isNaN(numericValue)) {
+    return { default: numericValue };
+  }
+
+  return {};
+}
+
+function renderControllerFormValueLines(field: ForgeScaffoldField): string[] {
+  const defaultLiteral = renderDefaultLiteral(field.default);
+
+  if (field.type === 'boolean') {
+    return [
+      `${field.name}Checked: values.${field.name} === true ? 'checked' : '',`,
+      `${field.name}Error: errors.${field.name}?.[0] ?? '',`,
+    ].map((line) => `      ${line}`);
+  }
+
+  return [
+    `${field.name}: String(values.${field.name} ?? ${defaultLiteral}),`,
+    `${field.name}Error: errors.${field.name}?.[0] ?? '',`,
+  ].map((line) => `      ${line}`);
+}
+
+function renderFormFieldTemplate(resource: ForgeScaffoldResource, field: ForgeScaffoldField): string[] {
+  const label = `${resource.singularTitle} ${humanize(field.name).toLowerCase()}`;
+
+  if (field.type === 'text') {
+    return [
+      `  <div>{{${field.name}Error}}</div>`,
+      '  <label>',
+      `    ${label}`,
+      `    <textarea name="${field.name}">{{${field.name}}}</textarea>`,
+      '  </label>',
+    ];
+  }
+
+  if (field.type === 'boolean') {
+    return [
+      `  <div>{{${field.name}Error}}</div>`,
+      '  <label>',
+      `    <input type="checkbox" name="${field.name}" value="true" {{${field.name}Checked}}>`,
+      `    ${label}`,
+      '  </label>',
+    ];
+  }
+
+  return [
+    `  <div>{{${field.name}Error}}</div>`,
+    '  <label>',
+    `    ${label}`,
+    `    <input type="${resolveInputType(field.type)}" name="${field.name}" value="{{${field.name}}}">`,
+    '  </label>',
+  ];
+}
+
+function renderDefaultLiteral(value: string | boolean | number | undefined): string {
+  if (typeof value === 'string') {
+    return JSON.stringify(value);
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+
+  return "''";
+}
+
+function resolveInputType(type: ForgePrimitiveFieldType): string {
+  switch (type) {
+    case 'integer':
+    case 'decimal':
+      return 'number';
+    case 'date':
+      return 'date';
+    case 'string':
+    case 'text':
+    case 'boolean':
+      return 'text';
+    default:
+      return assertNever(type);
+  }
+}
+
 function toFileBasename(modelName: string): string {
   return modelName.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
 }
 
 function humanize(value: string): string {
-  return value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/-/g, ' ');
+  return value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/-/g, ' ').replace(/_/g, ' ');
 }
 
 function pluralize(value: string): string {

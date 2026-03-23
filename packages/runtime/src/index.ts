@@ -3,13 +3,15 @@ import { createServer } from 'node:http';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import type { ForgeModelMetadata, ForgeModelFieldMetadata } from '@forge/core';
+
 export type ForgeHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export type ForgeRouteParams = Record<string, string>;
 export type ForgeQueryParams = Record<string, string | string[]>;
 export type ForgeRequestBody = Record<string, string | string[]>;
-export type ForgeViewData = Record<string, ForgeTemplateValue>;
 export type ForgeTemplateValue = string | number | boolean | null | undefined;
+export type ForgeViewData = Record<string, ForgeTemplateValue>;
 
 export type ForgeRenderHtmlInput = {
   body: string;
@@ -121,6 +123,14 @@ export type ForgeRenderResponseOptions = ForgeRenderOptions & {
   headers?: Record<string, string>;
 };
 
+export type ForgeValidationErrorMap = Record<string, string[]>;
+
+export type ForgeValidationResult = {
+  valid: boolean;
+  values: Record<string, string | boolean | number>;
+  errors: ForgeValidationErrorMap;
+};
+
 export function createApp(options: ForgeViewRendererOptions = {}): ForgeApp {
   return new ForgeApp(options);
 }
@@ -201,6 +211,41 @@ export async function renderView(
 
 export function createViewRenderer(options: ForgeViewRendererOptions = {}): ForgeViewRenderer {
   return new ForgeViewRenderer(options);
+}
+
+export function validateResourceInput(
+  model: { metadata: ForgeModelMetadata },
+  input: ForgeRequestBody,
+): ForgeValidationResult {
+  const values: Record<string, string | boolean | number> = {};
+  const errors: ForgeValidationErrorMap = {};
+
+  for (const field of model.metadata.fields) {
+    const rawValue = input[field.name];
+    const normalizedValue = normalizeFieldValue(field, rawValue);
+
+    if (normalizedValue === undefined) {
+      if (field.default !== undefined) {
+        values[field.name] = field.default;
+      } else if (field.type === 'boolean') {
+        values[field.name] = false;
+      }
+    } else {
+      values[field.name] = normalizedValue;
+    }
+
+    const valueForValidation = values[field.name];
+
+    if (field.required && isBlankValidationValue(field, valueForValidation)) {
+      errors[field.name] = [`${humanizeFieldName(field.name)} is required.`];
+    }
+  }
+
+  return {
+    valid: Object.keys(errors).length === 0,
+    values,
+    errors,
+  };
 }
 
 export class ForgeApp {
@@ -424,58 +469,67 @@ function readRequestBody(nodeRequest: import('node:http').IncomingMessage): Prom
     });
 
     nodeRequest.on('end', () => {
-      const rawBody = chunks.join('');
+      const remainder = decoder.decode();
+      if (remainder) {
+        chunks.push(remainder);
+      }
 
-      if (rawBody.length === 0) {
+      const bodyText = chunks.join('').trim();
+      if (bodyText.length === 0) {
         resolve({});
         return;
       }
 
-      resolve(readSearchParams(new URLSearchParams(rawBody)));
+      resolve(parseFormEncodedBody(bodyText));
     });
 
     nodeRequest.on('error', (error) => reject(error));
   });
 }
 
-function readSearchParams(searchParams: URLSearchParams): Record<string, string | string[]> {
-  const values: Record<string, string | string[]> = {};
+function parseFormEncodedBody(bodyText: string): ForgeRequestBody {
+  const params = new URLSearchParams(bodyText);
+  return readSearchParams(params);
+}
 
-  for (const [key, value] of searchParams.entries()) {
-    const currentValue = values[key];
+function readSearchParams(params: URLSearchParams): Record<string, string | string[]> {
+  const output: Record<string, string | string[]> = {};
+
+  for (const [key, value] of params.entries()) {
+    const currentValue = output[key];
 
     if (currentValue === undefined) {
-      values[key] = value;
+      output[key] = value;
       continue;
     }
 
-    values[key] = Array.isArray(currentValue) ? [...currentValue, value] : [currentValue, value];
+    output[key] = Array.isArray(currentValue) ? [...currentValue, value] : [currentValue, value];
   }
 
-  return values;
+  return output;
 }
 
 function matchRoute(
   routes: ForgeRegisteredRoute[],
   method: string,
-  pathValue: string,
+  requestPath: string,
 ): { definition: ForgeRouteDefinition; params: ForgeRouteParams } | undefined {
-  const requestSegments = splitPath(pathValue);
+  const requestSegments = splitPath(requestPath);
 
-  for (const routeValue of routes) {
-    if (routeValue.definition.method !== method) {
+  for (const routeEntry of routes) {
+    if (routeEntry.definition.method !== method.toUpperCase()) {
       continue;
     }
 
-    if (routeValue.segments.length !== requestSegments.length) {
+    if (routeEntry.segments.length !== requestSegments.length) {
       continue;
     }
 
     const params: ForgeRouteParams = {};
-    let matches = true;
+    let matched = true;
 
-    for (let index = 0; index < routeValue.segments.length; index += 1) {
-      const routeSegment = routeValue.segments[index];
+    for (let index = 0; index < routeEntry.segments.length; index += 1) {
+      const routeSegment = routeEntry.segments[index];
       const requestSegment = requestSegments[index];
 
       if (routeSegment.startsWith(':')) {
@@ -484,14 +538,14 @@ function matchRoute(
       }
 
       if (routeSegment !== requestSegment) {
-        matches = false;
+        matched = false;
         break;
       }
     }
 
-    if (matches) {
+    if (matched) {
       return {
-        definition: routeValue.definition,
+        definition: routeEntry.definition,
         params,
       };
     }
@@ -501,28 +555,21 @@ function matchRoute(
 }
 
 function splitPath(pathValue: string): string[] {
-  if (pathValue === '/' || pathValue.length === 0) {
-    return [];
-  }
-
   return pathValue.split('/').filter((segment) => segment.length > 0);
 }
 
-function writeNodeResponse(
-  nodeResponse: import('node:http').ServerResponse,
-  response: ForgeResponseData,
-): void {
-  nodeResponse.statusCode = response.status;
+function writeNodeResponse(nodeResponse: import('node:http').ServerResponse, responseData: ForgeResponseData): void {
+  nodeResponse.statusCode = responseData.status;
 
-  for (const [name, value] of Object.entries(response.headers)) {
+  for (const [name, value] of Object.entries(responseData.headers)) {
     nodeResponse.setHeader(name, value);
   }
 
-  nodeResponse.end(response.body);
+  nodeResponse.end(responseData.body);
 }
 
-function normalizeViewName(value: string): string {
-  return value.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+function normalizeViewName(name: string): string {
+  return name.replace(/\\/g, '/').replace(/\.html$/, '');
 }
 
 function resolveLayoutName(layout: string): string {
@@ -530,55 +577,26 @@ function resolveLayoutName(layout: string): string {
   return normalizedLayout.startsWith('layouts/') ? normalizedLayout : `layouts/${normalizedLayout}`;
 }
 
-function resolvePartialView(parentView: string, partialName: string): string {
-  const normalizedParent = normalizeViewName(parentView);
+function resolvePartialView(view: string, partialName: string): string {
   const normalizedPartial = normalizeViewName(partialName);
-  const directoryName = path.posix.dirname(normalizedParent);
 
   if (normalizedPartial.includes('/')) {
-    return prefixPartialFilename(normalizedPartial);
+    const segments = normalizedPartial.split('/');
+    const lastSegment = segments[segments.length - 1];
+    segments[segments.length - 1] = lastSegment.startsWith('_') ? lastSegment : `_${lastSegment}`;
+    return segments.join('/');
   }
 
-  if (directoryName === '.') {
-    return prefixPartialFilename(normalizedPartial);
-  }
-
-  return `${directoryName}/${prefixPartialFilename(normalizedPartial)}`;
+  const directory = path.posix.dirname(normalizeViewName(view));
+  const partialBaseName = normalizedPartial.startsWith('_') ? normalizedPartial : `_${normalizedPartial}`;
+  return directory === '.' ? partialBaseName : `${directory}/${partialBaseName}`;
 }
 
-function prefixPartialFilename(value: string): string {
-  const segments = value.split('/');
-  const fileName = segments.pop() ?? value;
-  const partialFileName = fileName.startsWith('_') ? fileName : `_${fileName}`;
-
-  return [...segments, partialFileName].join('/');
-}
-
-function stringifyTemplateValue(value: ForgeTemplateValue): string {
-  if (value === null || value === undefined) {
-    return '';
-  }
-
-  return String(value);
-}
-
-async function loadControllerClass(rootDir: string, controllerName: string): Promise<ForgeControllerClass> {
-  const controllerFilePath = await resolveModulePath(rootDir, `app/controllers/${toControllerFileBaseName(controllerName)}.controller`);
-  const controllerModule = await import(pathToFileURL(controllerFilePath).href);
-  const controllerValue = controllerModule[controllerName];
-
-  if (typeof controllerValue !== 'function') {
-    throw new Error(`Expected ${controllerFilePath} to export ${controllerName}.`);
-  }
-
-  return controllerValue as ForgeControllerClass;
-}
-
-async function resolveModulePath(rootDir: string, moduleBasePath: string): Promise<string> {
-  const extensions = ['.js', '.mjs', '.cjs', '.ts', '.mts', '.cts'];
+async function resolveModulePath(rootDir: string, baseModulePath: string): Promise<string> {
+  const extensions = ['.ts', '.js', '.mjs', '.cjs'];
 
   for (const extension of extensions) {
-    const candidate = path.resolve(rootDir, `${moduleBasePath}${extension}`);
+    const candidate = path.join(rootDir, `${baseModulePath}${extension}`);
 
     try {
       await readFile(candidate, 'utf8');
@@ -590,38 +608,96 @@ async function resolveModulePath(rootDir: string, moduleBasePath: string): Promi
     }
   }
 
-  throw new Error(`Could not find ${moduleBasePath} with a supported extension in ${rootDir}.`);
+  throw new Error(`Could not find module ${baseModulePath} in ${rootDir}.`);
 }
 
-function toControllerFileBaseName(controllerName: string): string {
-  return controllerName.replace(/Controller$/, '').replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+async function loadControllerClass(rootDir: string, controllerName: string): Promise<ForgeControllerClass> {
+  const controllerFileName = `${toKebabCase(controllerName.replace(/Controller$/, ''))}.controller`;
+  const controllerModulePath = await resolveModulePath(rootDir, `app/controllers/${controllerFileName}`);
+  const moduleValue = await import(pathToFileURL(controllerModulePath).href);
+  const ControllerClass = moduleValue[controllerName];
+
+  if (typeof ControllerClass !== 'function') {
+    throw new Error(`Expected ${controllerModulePath} to export ${controllerName}.`);
+  }
+
+  return ControllerClass as ForgeControllerClass;
+}
+
+function toKebabCase(value: string): string {
+  return value.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
 }
 
 function isMissingFileError(error: unknown): error is Error & { code: string } {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
+function stringifyTemplateValue(value: ForgeTemplateValue): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  return String(value);
+}
+
 async function replaceAsync(
-  value: string,
+  input: string,
   pattern: RegExp,
-  replacer: (...args: string[]) => Promise<string>,
+  replacement: (...args: string[]) => Promise<string>,
 ): Promise<string> {
-  const matches = Array.from(value.matchAll(pattern));
+  const matches = Array.from(input.matchAll(pattern));
 
   if (matches.length === 0) {
-    return value;
+    return input;
   }
 
-  const replacements = await Promise.all(
-    matches.map((match) => replacer(...match.map((entry) => entry ?? ''))),
-  );
+  const replacements = await Promise.all(matches.map((match) => replacement(...match)));
+  let replacementIndex = 0;
 
-  let nextValue = value;
+  return input.replace(pattern, () => replacements[replacementIndex++] ?? '');
+}
 
-  for (let index = 0; index < matches.length; index += 1) {
-    const matchedText = matches[index][0];
-    nextValue = nextValue.replace(matchedText, replacements[index]);
+function normalizeFieldValue(
+  field: ForgeModelFieldMetadata,
+  rawValue: string | string[] | undefined,
+): string | boolean | number | undefined {
+  const firstValue = Array.isArray(rawValue) ? rawValue[0] : rawValue;
+
+  if (field.type === 'boolean') {
+    if (firstValue === undefined) {
+      return undefined;
+    }
+
+    return firstValue === 'true' || firstValue === 'on' || firstValue === '1';
   }
 
-  return nextValue;
+  if (firstValue === undefined) {
+    return undefined;
+  }
+
+  return firstValue;
+}
+
+function isBlankValidationValue(
+  field: ForgeModelFieldMetadata,
+  value: string | boolean | number | undefined,
+): boolean {
+  if (value === undefined || value === null) {
+    return true;
+  }
+
+  if (field.type === 'boolean') {
+    return value !== true;
+  }
+
+  return String(value).trim().length === 0;
+}
+
+function humanizeFieldName(value: string): string {
+  const withSpaces = value
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/_/g, ' ')
+    .trim();
+
+  return withSpaces.charAt(0).toUpperCase() + withSpaces.slice(1);
 }
