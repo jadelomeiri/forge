@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 export type ForgeHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -50,6 +51,29 @@ export type ForgeRouteDefinition = {
   path: string;
   controller: ForgeControllerHandler;
   name?: string;
+};
+
+export type ForgeRoutesConfigEntry = {
+  name: string;
+  method: ForgeHttpMethod;
+  path: string;
+  controller?: string;
+  action?: string;
+  view?: string;
+};
+
+export type ForgeControllerClass = new () => Record<string, unknown>;
+
+export type ForgeControllerResolver = {
+  resolve(route: ForgeRoutesConfigEntry): Promise<ForgeControllerHandler>;
+};
+
+export type ForgeControllerRegistration = Record<string, ForgeControllerClass>;
+
+export type ForgeRegisterRoutesOptions = {
+  rootDir?: string;
+  controllerResolver?: ForgeControllerResolver;
+  controllers?: ForgeControllerRegistration;
 };
 
 export type ForgeBootOptions = {
@@ -103,6 +127,61 @@ export function createApp(options: ForgeViewRendererOptions = {}): ForgeApp {
 
 export function route(definition: ForgeRouteDefinition): ForgeRouteDefinition {
   return definition;
+}
+
+export async function registerRoutesFromConfig(
+  app: ForgeApp,
+  routes: readonly ForgeRoutesConfigEntry[],
+  options: ForgeRegisterRoutesOptions = {},
+): Promise<ForgeApp> {
+  const controllerResolver = options.controllerResolver ?? createControllerResolver(options);
+
+  for (const routeEntry of routes) {
+    const handler = await createRouteHandler(routeEntry, controllerResolver);
+    app.registerRoute({
+      method: routeEntry.method,
+      path: routeEntry.path,
+      name: routeEntry.name,
+      controller: handler,
+    });
+  }
+
+  return app;
+}
+
+export async function loadRoutesConfig(rootDir = process.cwd()): Promise<readonly ForgeRoutesConfigEntry[]> {
+  const routesModulePath = await resolveModulePath(rootDir, 'config/routes');
+  const moduleValue = await import(pathToFileURL(routesModulePath).href);
+  const routes = moduleValue.routes;
+
+  if (!Array.isArray(routes)) {
+    throw new Error(`Expected ${routesModulePath} to export a routes array.`);
+  }
+
+  return routes as readonly ForgeRoutesConfigEntry[];
+}
+
+export function createControllerResolver(options: ForgeRegisterRoutesOptions = {}): ForgeControllerResolver {
+  const rootDir = options.rootDir ?? process.cwd();
+  const registeredControllers = options.controllers ?? {};
+
+  return {
+    async resolve(routeEntry) {
+      if (!routeEntry.controller || !routeEntry.action) {
+        throw new Error(`Route ${routeEntry.name} is missing a controller or action.`);
+      }
+
+      const ControllerClass = registeredControllers[routeEntry.controller] ?? await loadControllerClass(rootDir, routeEntry.controller);
+      const controllerInstance = new ControllerClass();
+      const actionValue = controllerInstance[routeEntry.action];
+
+      if (typeof actionValue !== 'function') {
+        throw new Error(`Controller ${routeEntry.controller} does not define action ${routeEntry.action}.`);
+      }
+
+      return async (context) => actionValue.call(controllerInstance, context) as Promise<ForgeResponseData>;
+    },
+  };
 }
 
 export function html(body: string, status = 200): ForgeResponseData {
@@ -252,6 +331,17 @@ function createRegisteredRoute(definition: ForgeRouteDefinition): ForgeRegistere
     definition,
     segments: splitPath(definition.path),
   };
+}
+
+async function createRouteHandler(
+  routeEntry: ForgeRoutesConfigEntry,
+  controllerResolver: ForgeControllerResolver,
+): Promise<ForgeControllerHandler> {
+  if (routeEntry.view) {
+    return async ({ response }) => response.render(routeEntry.view as string);
+  }
+
+  return controllerResolver.resolve(routeEntry);
 }
 
 function createResponseHelpers(viewRenderer: ForgeViewRenderer): ForgeResponseHelpers {
@@ -470,6 +560,45 @@ function stringifyTemplateValue(value: ForgeTemplateValue): string {
   }
 
   return String(value);
+}
+
+async function loadControllerClass(rootDir: string, controllerName: string): Promise<ForgeControllerClass> {
+  const controllerFilePath = await resolveModulePath(rootDir, `app/controllers/${toControllerFileBaseName(controllerName)}.controller`);
+  const controllerModule = await import(pathToFileURL(controllerFilePath).href);
+  const controllerValue = controllerModule[controllerName];
+
+  if (typeof controllerValue !== 'function') {
+    throw new Error(`Expected ${controllerFilePath} to export ${controllerName}.`);
+  }
+
+  return controllerValue as ForgeControllerClass;
+}
+
+async function resolveModulePath(rootDir: string, moduleBasePath: string): Promise<string> {
+  const extensions = ['.js', '.mjs', '.cjs', '.ts', '.mts', '.cts'];
+
+  for (const extension of extensions) {
+    const candidate = path.resolve(rootDir, `${moduleBasePath}${extension}`);
+
+    try {
+      await readFile(candidate, 'utf8');
+      return candidate;
+    } catch (error) {
+      if (!isMissingFileError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error(`Could not find ${moduleBasePath} with a supported extension in ${rootDir}.`);
+}
+
+function toControllerFileBaseName(controllerName: string): string {
+  return controllerName.replace(/Controller$/, '').replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+}
+
+function isMissingFileError(error: unknown): error is Error & { code: string } {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
 async function replaceAsync(

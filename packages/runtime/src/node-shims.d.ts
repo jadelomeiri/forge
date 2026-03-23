@@ -15,6 +15,10 @@ declare module 'node:path' {
   };
 }
 
+declare module 'node:url' {
+  export function pathToFileURL(path: string): URL;
+}
+
 declare module 'node:http' {
   export type IncomingHttpHeaders = Record<string, string | string[] | undefined>;
 
