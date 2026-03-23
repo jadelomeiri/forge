@@ -276,7 +276,7 @@ export class ForgeApp {
 
   async boot(options: ForgeBootOptions = {}): Promise<ForgeBootResult> {
     const host = options.host ?? '127.0.0.1';
-    const port = options.port ?? 3000;
+    const requestedPort = options.port ?? 3000;
     const server = createServer(async (nodeRequest, nodeResponse) => {
       const request = await createForgeRequest(nodeRequest);
       const matchedRoute = matchRoute(this.routes, request.method, request.path);
@@ -299,8 +299,11 @@ export class ForgeApp {
     });
 
     await new Promise<void>((resolve) => {
-      server.listen(port, host, () => resolve());
+      server.listen(requestedPort, host, () => resolve());
     });
+
+    const address = server.address();
+    const port = typeof address === 'object' && address ? address.port : requestedPort;
 
     return {
       host,
