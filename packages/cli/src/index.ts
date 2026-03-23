@@ -7,6 +7,7 @@ declare const process: {
 };
 
 import { createForgeApp } from '@forge/create-forge-app';
+import { generateModel } from '@forge/generators';
 import { parseCommand, renderCommandHelp } from './commands.js';
 
 type CommandHelpName = Parameters<typeof renderCommandHelp>[0];
@@ -28,8 +29,48 @@ export function run(argv: string[] = process.argv.slice(2)): number | Promise<nu
     return runNewCommand(result.command.args);
   }
 
+  if (result.command.name === 'generate model') {
+    return runGenerateModelCommand(result.command.args);
+  }
+
   console.log(renderStubMessage(result.command.name, result.command.args));
   return 0;
+}
+
+
+async function runGenerateModelCommand(args: string[]): Promise<number> {
+  const [modelName, ...fieldArgs] = args;
+
+  if (!modelName) {
+    console.error('Missing model name.\n\n' + renderCommandHelp('generate model'));
+    return 1;
+  }
+
+  try {
+    const result = await generateModel({
+      projectRoot: process.cwd(),
+      modelName,
+      fieldArgs,
+    });
+
+    console.log([
+      `Generated model: ${result.modelName}`,
+      `Model file: ${result.modelFilePath}`,
+      `Schema source: ${result.schemaPath}`,
+      `Manifest: ${result.manifestPath}`,
+      '',
+      'Fields:',
+      ...(result.fields.length > 0
+        ? result.fields.map((field) => `- ${field.name}:${field.type}`)
+        : ['- (none)']),
+    ].join('\n'));
+
+    return 0;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`Failed to generate model: ${message}`);
+    return 1;
+  }
 }
 
 async function runNewCommand(args: string[]): Promise<number> {
