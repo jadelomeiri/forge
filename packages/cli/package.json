@@ -19,11 +19,5 @@
   },
   "bin": {
     "forge": "./dist/index.js"
-  },
-  "references": [
-    { "path": "../core" },
-    { "path": "../generators" },
-    { "path": "../manifest" },
-    { "path": "../runtime" }
-  ]
+  }
 }

@@ -13,8 +13,5 @@
   },
   "dependencies": {
     "@forge/core": "0.0.0"
-  },
-  "references": [
-    { "path": "../core" }
-  ]
+  }
 }

@@ -16,8 +16,5 @@
   },
   "bin": {
     "create-forge-app": "./dist/index.js"
-  },
-  "references": [
-    { "path": "../cli" }
-  ]
+  }
 }

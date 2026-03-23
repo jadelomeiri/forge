@@ -15,10 +15,5 @@
     "@forge/core": "0.0.0",
     "@forge/manifest": "0.0.0",
     "@forge/templates": "0.0.0"
-  },
-  "references": [
-    { "path": "../core" },
-    { "path": "../manifest" },
-    { "path": "../templates" }
-  ]
+  }
 }
