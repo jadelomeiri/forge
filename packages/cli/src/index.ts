@@ -6,6 +6,10 @@ declare const process: {
   exitCode?: number;
 };
 
+import { spawn } from 'node:child_process';
+import { access, readFile } from 'node:fs/promises';
+import path from 'node:path';
+
 import { createForgeApp } from '@forge/create-forge-app';
 import { generateModel, generateScaffold } from '@forge/generators';
 import { parseCommand, renderCommandHelp } from './commands.js';
@@ -37,10 +41,13 @@ export function run(argv: string[] = process.argv.slice(2)): number | Promise<nu
     return runGenerateScaffoldCommand(result.command.args);
   }
 
+  if (result.command.name === 'migrate') {
+    return runMigrateCommand(result.command.args);
+  }
+
   console.log(renderStubMessage(result.command.name, result.command.args));
   return 0;
 }
-
 
 async function runGenerateModelCommand(args: string[]): Promise<number> {
   const [modelName, ...fieldArgs] = args;
@@ -146,6 +153,90 @@ async function runNewCommand(args: string[]): Promise<number> {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     console.error(`Failed to create app: ${message}`);
+    return 1;
+  }
+}
+
+export type ForgeMigrateDependencies = {
+  cwd(): string;
+  readFile(path: string, encoding: 'utf8'): Promise<string>;
+  access(path: string): Promise<void>;
+  runCommand(command: string, args: string[], options: { cwd: string }): Promise<void>;
+};
+
+const defaultMigrateDependencies: ForgeMigrateDependencies = {
+  cwd: () => process.cwd(),
+  readFile,
+  access,
+  runCommand(command, args, options) {
+    return new Promise<void>((resolve, reject) => {
+      const child = spawn(command, args, {
+        cwd: options.cwd,
+        stdio: 'inherit',
+      });
+
+      child.on('error', reject);
+      child.on('exit', (code: number | null) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+
+        reject(new Error(`Command failed with exit code ${code ?? 'unknown'}.`));
+      });
+    });
+  },
+};
+
+export async function runMigrateCommand(
+  args: string[],
+  dependencies: ForgeMigrateDependencies = defaultMigrateDependencies,
+): Promise<number> {
+  if (args.length > 0) {
+    console.error(`Unexpected arguments: ${args.join(', ')}\n\n${renderCommandHelp('migrate')}`);
+    return 1;
+  }
+
+  const projectRoot = dependencies.cwd();
+  const schemaPath = path.join(projectRoot, 'db/schema.prisma');
+  const packageJsonPath = path.join(projectRoot, 'package.json');
+
+  try {
+    await dependencies.access(schemaPath);
+  } catch {
+    console.error(`Failed to migrate: expected Prisma schema at ${schemaPath}`);
+    return 1;
+  }
+
+  try {
+    await dependencies.access(packageJsonPath);
+  } catch {
+    console.error(`Failed to migrate: expected app package.json at ${packageJsonPath}`);
+    return 1;
+  }
+
+  try {
+    const packageJson = JSON.parse(await dependencies.readFile(packageJsonPath, 'utf8')) as {
+      scripts?: Record<string, string>;
+    };
+
+    if (!packageJson.scripts || typeof packageJson.scripts['db:migrate'] !== 'string') {
+      throw new Error('Expected package.json to define a db:migrate script.');
+    }
+
+    await dependencies.runCommand('npm', ['run', 'db:migrate'], { cwd: projectRoot });
+
+    console.log([
+      'Migration complete.',
+      `Schema: ${schemaPath}`,
+      `Database: ${path.join(projectRoot, 'db/dev.db')}`,
+      'Workflow: npm run db:migrate',
+    ].join('\n'));
+
+    return 0;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`Failed to migrate: ${message}`);
     return 1;
   }
 }

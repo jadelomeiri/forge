@@ -126,7 +126,14 @@ function renderPackageJson(appName: string): string {
       version: '0.1.0',
       type: 'module',
       scripts: {
+        'db:migrate': 'prisma db push --schema db/schema.prisma',
         test: 'node --test tests/**/*.test.ts',
+      },
+      dependencies: {
+        '@prisma/client': '^6.15.0',
+      },
+      devDependencies: {
+        prisma: '^6.15.0',
       },
     },
     null,

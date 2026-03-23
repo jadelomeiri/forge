@@ -27,7 +27,7 @@ const COMMAND_SPECS: Record<ForgeCommandName, Omit<ForgeCommand, 'args'>> = {
   },
   migrate: {
     name: 'migrate',
-    description: 'Run database migrations (stub).',
+    description: 'Run the local Prisma migration workflow for the current app.',
     usage: 'forge migrate',
   },
   'generate model': {
