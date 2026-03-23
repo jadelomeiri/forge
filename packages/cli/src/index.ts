@@ -2,14 +2,16 @@
 
 declare const process: {
   argv: string[];
+  cwd(): string;
   exitCode?: number;
 };
 
-type CommandHelpName = Parameters<typeof import('./commands.js').renderCommandHelp>[0];
-
+import { createForgeApp } from '@forge/create-forge-app';
 import { parseCommand, renderCommandHelp } from './commands.js';
 
-export function run(argv: string[] = process.argv.slice(2)): number {
+type CommandHelpName = Parameters<typeof renderCommandHelp>[0];
+
+export function run(argv: string[] = process.argv.slice(2)): number | Promise<number> {
   const result = parseCommand(argv);
 
   if (result.kind === 'help') {
@@ -22,8 +24,47 @@ export function run(argv: string[] = process.argv.slice(2)): number {
     return 1;
   }
 
+  if (result.command.name === 'new') {
+    return runNewCommand(result.command.args);
+  }
+
   console.log(renderStubMessage(result.command.name, result.command.args));
   return 0;
+}
+
+async function runNewCommand(args: string[]): Promise<number> {
+  const [appName, ...extraArgs] = args;
+
+  if (!appName) {
+    console.error('Missing app name.\n\n' + renderCommandHelp('new'));
+    return 1;
+  }
+
+  if (extraArgs.length > 0) {
+    console.error(`Unexpected arguments: ${extraArgs.join(', ')}\n\n${renderCommandHelp('new')}`);
+    return 1;
+  }
+
+  try {
+    const result = await createForgeApp({
+      appName,
+      destinationRoot: process.cwd(),
+    });
+
+    console.log([
+      `Created Forge app: ${result.appName}`,
+      `Location: ${result.appRoot}`,
+      '',
+      'Created files:',
+      ...result.files.map((file: string) => `- ${file}`),
+    ].join('\n'));
+
+    return 0;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`Failed to create app: ${message}`);
+    return 1;
+  }
 }
 
 function renderStubMessage(name: CommandHelpName, args: string[]): string {
@@ -39,4 +80,6 @@ function renderStubMessage(name: CommandHelpName, args: string[]): string {
   ].join('\n');
 }
 
-process.exitCode = run();
+const exitCode = await run();
+
+process.exitCode = exitCode;

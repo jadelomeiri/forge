@@ -16,7 +16,8 @@
     "@forge/core": "0.0.0",
     "@forge/generators": "0.0.0",
     "@forge/manifest": "0.0.0",
-    "@forge/runtime": "0.0.0"
+    "@forge/runtime": "0.0.0",
+    "@forge/create-forge-app": "0.0.0"
   },
   "bin": {
     "forge": "./dist/index.js"

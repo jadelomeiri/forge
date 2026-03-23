@@ -17,7 +17,7 @@ export type ForgeCommand = {
 const COMMAND_SPECS: Record<ForgeCommandName, Omit<ForgeCommand, 'args'>> = {
   new: {
     name: 'new',
-    description: 'Create a new Forge application (stub).',
+    description: 'Create a new Forge application.',
     usage: 'forge new <name>',
   },
   dev: {
@@ -65,6 +65,10 @@ export function parseCommand(argv: string[]): ParseResult {
   const [first, second, third, ...rest] = argv;
 
   if (first === 'new') {
+    if (isHelpFlag(second)) {
+      return { kind: 'help', text: renderCommandHelp('new') };
+    }
+
     return commandResult('new', [second, third, ...rest].filter(isDefined));
   }
 
