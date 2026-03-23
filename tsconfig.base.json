@@ -15,6 +15,21 @@
     "paths": {
       "@forge/create-forge-app": [
         "packages/create-forge-app/src/index.ts"
+      ],
+      "@forge/core": [
+        "packages/core/src/index.ts"
+      ],
+      "@forge/generators": [
+        "packages/generators/src/index.ts"
+      ],
+      "@forge/manifest": [
+        "packages/manifest/src/index.ts"
+      ],
+      "@forge/runtime": [
+        "packages/runtime/src/index.ts"
+      ],
+      "@forge/templates": [
+        "packages/templates/src/index.ts"
       ]
     }
   }
