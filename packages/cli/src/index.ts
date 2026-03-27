@@ -50,6 +50,10 @@ export function run(argv: string[] = process.argv.slice(2)): number | Promise<nu
     return runExplainModelCommand(result.command.args);
   }
 
+  if (result.command.name === 'explain route') {
+    return runExplainRouteCommand(result.command.args);
+  }
+
   console.log(renderStubMessage(result.command.name, result.command.args));
   return 0;
 }
@@ -178,6 +182,11 @@ export type ForgeExplainModelDependencies = {
   readManifest(path: string): Promise<ForgeManifest>;
 };
 
+export type ForgeExplainRouteDependencies = {
+  cwd(): string;
+  readManifest(path: string): Promise<ForgeManifest>;
+};
+
 const defaultMigrateDependencies: ForgeMigrateDependencies = {
   cwd: () => process.cwd(),
   readFile,
@@ -206,6 +215,11 @@ const defaultExplainModelDependencies: ForgeExplainModelDependencies = {
   cwd: () => process.cwd(),
   readFile,
   access,
+  readManifest,
+};
+
+const defaultExplainRouteDependencies: ForgeExplainRouteDependencies = {
+  cwd: () => process.cwd(),
   readManifest,
 };
 
@@ -288,6 +302,57 @@ export async function runExplainModelCommand(
     '',
     'Route names:',
     ...formatExplainLines(modelInfo.routeNames.map((name) => `- ${name}`)),
+  ].join('\n'));
+
+  return 0;
+}
+
+export async function runExplainRouteCommand(
+  args: string[],
+  dependencies: ForgeExplainRouteDependencies = defaultExplainRouteDependencies,
+): Promise<number> {
+  const [pathOrName, ...extraArgs] = args;
+
+  if (!pathOrName) {
+    console.error('Missing route path or name.\n\n' + renderCommandHelp('explain route'));
+    return 1;
+  }
+
+  if (extraArgs.length > 0) {
+    console.error(`Unexpected arguments: ${extraArgs.join(', ')}\n\n${renderCommandHelp('explain route')}`);
+    return 1;
+  }
+
+  const projectRoot = dependencies.cwd();
+  const manifestPath = path.join(projectRoot, '.forge/manifest.json');
+
+  let manifest: ForgeManifest;
+
+  try {
+    manifest = await dependencies.readManifest(manifestPath);
+  } catch {
+    console.error(`Failed to explain route: expected Forge manifest at ${manifestPath}`);
+    return 1;
+  }
+
+  const route = resolveRoute(pathOrName, manifest.routes);
+
+  if (!route) {
+    console.error(`Failed to explain route: route ${pathOrName} was not found in ${manifestPath}`);
+    return 1;
+  }
+
+  const controllerAction = formatControllerAction(route);
+  const controllerFile = resolveControllerFilePath(route, manifest);
+  const view = resolveRenderedView(route, manifest);
+
+  console.log([
+    `Route: ${route.name}`,
+    `Method: ${route.method}`,
+    `Path: ${route.path}`,
+    `Controller action: ${controllerAction}`,
+    `Controller file: ${controllerFile ?? '(none)'}`,
+    `Rendered view: ${view ?? '(unknown)'}`,
   ].join('\n'));
 
   return 0;
@@ -388,8 +453,133 @@ function formatExplainLines(lines: string[]): string[] {
   return lines.length > 0 ? lines : ['- (none)'];
 }
 
+function resolveRoute(input: string, routes: ForgeManifest['routes']): ForgeManifest['routes'][number] | undefined {
+  if (!input.startsWith('/')) {
+    return routes.find((route) => route.name === input);
+  }
+
+  const requestSegments = splitPath(input);
+
+  return routes.find((route) => {
+    const routeSegments = splitPath(route.path);
+
+    if (routeSegments.length !== requestSegments.length) {
+      return false;
+    }
+
+    for (let index = 0; index < routeSegments.length; index += 1) {
+      const routeSegment = routeSegments[index];
+      const requestSegment = requestSegments[index];
+
+      if (routeSegment.startsWith(':')) {
+        continue;
+      }
+
+      if (routeSegment !== requestSegment) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+}
+
+function splitPath(pathValue: string): string[] {
+  return pathValue.split('/').filter((segment) => segment.length > 0);
+}
+
+function formatControllerAction(route: ForgeManifest['routes'][number]): string {
+  if (route.controller && route.action) {
+    return `${route.controller}#${route.action}`;
+  }
+
+  if (route.controller) {
+    return route.controller;
+  }
+
+  return '(none)';
+}
+
+function resolveControllerFilePath(
+  route: ForgeManifest['routes'][number],
+  manifest: ForgeManifest,
+): string | undefined {
+  if (!route.controller) {
+    return undefined;
+  }
+
+  const byResource = manifest.resources.find((resource) =>
+    resource.controller === route.controller && resource.routeNames.includes(route.name)
+  );
+
+  if (byResource?.controllerFilePath) {
+    return byResource.controllerFilePath;
+  }
+
+  const basename = `${toControllerBasename(route.controller)}.controller.ts`;
+
+  return manifest.controllerFilePaths.find((controllerPath) =>
+    controllerPath.endsWith(`/${basename}`) || controllerPath === `app/controllers/${basename}`
+  );
+}
+
+function resolveRenderedView(route: ForgeManifest['routes'][number], manifest: ForgeManifest): string | undefined {
+  if (route.view) {
+    return normalizeViewName(route.view);
+  }
+
+  const conventionalView = resolveConventionalView(route);
+
+  if (!conventionalView) {
+    return undefined;
+  }
+
+  if (manifest.views.includes(conventionalView)) {
+    return conventionalView;
+  }
+
+  const conventionalPath = `app/views/${conventionalView}.html`;
+
+  if (manifest.viewPaths.includes(conventionalPath)) {
+    return conventionalView;
+  }
+
+  return undefined;
+}
+
+function resolveConventionalView(route: ForgeManifest['routes'][number]): string | undefined {
+  if (!route.action || !['index', 'show', 'new', 'edit'].includes(route.action)) {
+    return undefined;
+  }
+
+  const routeNameSegments = route.name.split('.');
+
+  if (routeNameSegments.length !== 2) {
+    return undefined;
+  }
+
+  const [resourceName, actionName] = routeNameSegments;
+
+  if (actionName !== route.action) {
+    return undefined;
+  }
+
+  return `${resourceName}/${actionName}`;
+}
+
+function normalizeViewName(view: string): string {
+  return view.replace(/\\/g, '/').replace(/\.html$/, '');
+}
+
 function toModelBasename(modelName: string): string {
   return modelName
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .toLowerCase();
+}
+
+function toControllerBasename(controllerName: string): string {
+  return controllerName
+    .replace(/Controller$/, '')
     .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
     .toLowerCase();
 }
