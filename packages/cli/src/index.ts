@@ -11,7 +11,8 @@ import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { createForgeApp } from '@forge/create-forge-app';
-import { generateModel, generateScaffold } from '@forge/generators';
+import { generateModel, generateScaffold, parseModelMetadata } from '@forge/generators';
+import { readManifest, type ForgeManifest } from '@forge/manifest';
 import { parseCommand, renderCommandHelp } from './commands.js';
 
 type CommandHelpName = Parameters<typeof renderCommandHelp>[0];
@@ -43,6 +44,10 @@ export function run(argv: string[] = process.argv.slice(2)): number | Promise<nu
 
   if (result.command.name === 'migrate') {
     return runMigrateCommand(result.command.args);
+  }
+
+  if (result.command.name === 'explain model') {
+    return runExplainModelCommand(result.command.args);
   }
 
   console.log(renderStubMessage(result.command.name, result.command.args));
@@ -166,6 +171,13 @@ export type ForgeMigrateDependencies = {
   runCommand(command: string, args: string[], options: { cwd: string }): Promise<void>;
 };
 
+export type ForgeExplainModelDependencies = {
+  cwd(): string;
+  readFile(path: string, encoding: 'utf8'): Promise<string>;
+  access(path: string): Promise<void>;
+  readManifest(path: string): Promise<ForgeManifest>;
+};
+
 const defaultMigrateDependencies: ForgeMigrateDependencies = {
   cwd: () => process.cwd(),
   readFile,
@@ -189,6 +201,97 @@ const defaultMigrateDependencies: ForgeMigrateDependencies = {
     });
   },
 };
+
+const defaultExplainModelDependencies: ForgeExplainModelDependencies = {
+  cwd: () => process.cwd(),
+  readFile,
+  access,
+  readManifest,
+};
+
+export async function runExplainModelCommand(
+  args: string[],
+  dependencies: ForgeExplainModelDependencies = defaultExplainModelDependencies,
+): Promise<number> {
+  const [modelName, ...extraArgs] = args;
+
+  if (!modelName) {
+    console.error('Missing model name.\n\n' + renderCommandHelp('explain model'));
+    return 1;
+  }
+
+  if (extraArgs.length > 0) {
+    console.error(`Unexpected arguments: ${extraArgs.join(', ')}\n\n${renderCommandHelp('explain model')}`);
+    return 1;
+  }
+
+  const projectRoot = dependencies.cwd();
+  const manifestPath = path.join(projectRoot, '.forge/manifest.json');
+
+  let manifest: ForgeManifest;
+
+  try {
+    manifest = await dependencies.readManifest(manifestPath);
+  } catch {
+    console.error(`Failed to explain model: expected Forge manifest at ${manifestPath}`);
+    return 1;
+  }
+
+  const modelInfo = resolveModelInfo(modelName, manifest);
+
+  if (!modelInfo) {
+    console.error(`Failed to explain model: model ${modelName} was not found in ${manifestPath}`);
+    return 1;
+  }
+
+  const modelFilePath = path.join(projectRoot, modelInfo.modelFilePath);
+
+  try {
+    await dependencies.access(modelFilePath);
+  } catch {
+    console.error(`Failed to explain model: expected model file at ${modelFilePath}`);
+    return 1;
+  }
+
+  const modelSource = await dependencies.readFile(modelFilePath, 'utf8');
+  const modelMetadata = parseModelMetadata(modelSource, modelName);
+  const fieldLines = modelMetadata.fields.map((field) => `- ${field.name}: ${field.type}`);
+  const defaults = modelMetadata.fields.filter((field) => field.default !== undefined);
+  const defaultLines = defaults.map((field) => `- ${field.name}: ${String(field.default)}`);
+  const required = modelMetadata.fields.filter((field) => field.required);
+  const validationLines = required.map((field) => `- ${field.name}: required`);
+  const linkageLines = [
+    `- resource: ${modelInfo.resourceName}`,
+    ...(modelInfo.controller ? [`- controller: ${modelInfo.controller}`] : []),
+    ...(modelInfo.controllerFilePath ? [`- controller file: ${modelInfo.controllerFilePath}`] : []),
+  ];
+  const viewsLine = modelInfo.viewsPath ? [modelInfo.viewsPath] : [];
+
+  console.log([
+    `Model: ${modelName}`,
+    `File path: ${modelInfo.modelFilePath}`,
+    '',
+    'Fields:',
+    ...formatExplainLines(fieldLines),
+    '',
+    'Defaults:',
+    ...formatExplainLines(defaultLines),
+    '',
+    'Validations:',
+    ...formatExplainLines(validationLines),
+    '',
+    'Scaffold/controller linkage:',
+    ...formatExplainLines(linkageLines),
+    '',
+    'Views path:',
+    ...formatExplainLines(viewsLine),
+    '',
+    'Route names:',
+    ...formatExplainLines(modelInfo.routeNames.map((name) => `- ${name}`)),
+  ].join('\n'));
+
+  return 0;
+}
 
 export async function runMigrateCommand(
   args: string[],
@@ -241,6 +344,66 @@ export async function runMigrateCommand(
     console.error(`Failed to migrate: ${message}`);
     return 1;
   }
+}
+
+type ResolvedModelInfo = {
+  modelFilePath: string;
+  resourceName: string;
+  controller?: string;
+  controllerFilePath?: string;
+  viewsPath?: string;
+  routeNames: string[];
+};
+
+function resolveModelInfo(modelName: string, manifest: ForgeManifest): ResolvedModelInfo | null {
+  const byModel = manifest.resources.find((resource) => resource.model === modelName);
+
+  if (byModel && byModel.modelFilePath) {
+    return {
+      modelFilePath: byModel.modelFilePath,
+      resourceName: byModel.name,
+      controller: byModel.controller,
+      controllerFilePath: byModel.controllerFilePath,
+      viewsPath: byModel.viewsPath,
+      routeNames: [...byModel.routeNames].sort((left, right) => left.localeCompare(right)),
+    };
+  }
+
+  const fallbackModelFilePath = manifest.modelFilePaths.find((modelPath) =>
+    modelPath.endsWith(`/${toModelBasename(modelName)}.model.ts`) || modelPath === `app/models/${toModelBasename(modelName)}.model.ts`
+  );
+
+  if (!manifest.models.includes(modelName) || !fallbackModelFilePath) {
+    return null;
+  }
+
+  return {
+    modelFilePath: fallbackModelFilePath,
+    resourceName: pluralize(toModelBasename(modelName)),
+    routeNames: [],
+  };
+}
+
+function formatExplainLines(lines: string[]): string[] {
+  return lines.length > 0 ? lines : ['- (none)'];
+}
+
+function toModelBasename(modelName: string): string {
+  return modelName
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .toLowerCase();
+}
+
+function pluralize(value: string): string {
+  if (value.endsWith('s')) {
+    return `${value}es`;
+  }
+
+  if (value.endsWith('y')) {
+    return `${value.slice(0, -1)}ies`;
+  }
+
+  return `${value}s`;
 }
 
 function renderStubMessage(name: CommandHelpName, args: string[]): string {
