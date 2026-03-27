@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
-import { runExplainModelCommand, runMigrateCommand } from './index.js';
+import { runExplainModelCommand, runExplainRouteCommand, runMigrateCommand } from './index.js';
 
 test('runMigrateCommand runs the generated app db:migrate workflow', async () => {
   const commandCalls: Array<{ command: string; args: string[]; cwd: string }> = [];
@@ -255,6 +255,93 @@ test('runExplainModelCommand fallback resolves kebab-case model filenames for mu
     assert.match(outputs[0], /Model: BlogPost/);
     assert.match(outputs[0], /File path: app\/models\/blog-post\.model\.ts/);
     assert.match(outputs[0], /Scaffold\/controller linkage:\n- resource: blog-posts/);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test('runExplainRouteCommand resolves routes by path with runtime-style segment matching', async () => {
+  const outputs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    outputs.push(String(value));
+  };
+
+  try {
+    const exitCode = await runExplainRouteCommand(['/posts/1'], {
+      cwd: () => '/tmp/forge-demo',
+      readManifest: async () => ({
+        app: { name: 'demo' },
+        framework: { name: 'forge', version: '0.0.0' },
+        resources: [{
+          name: 'posts',
+          controller: 'PostsController',
+          controllerFilePath: 'app/controllers/posts.controller.ts',
+          routeNames: ['posts.show'],
+        }],
+        models: [],
+        modelFilePaths: [],
+        controllers: ['PostsController'],
+        controllerFilePaths: ['app/controllers/posts.controller.ts'],
+        routes: [
+          { name: 'posts.index', method: 'GET', path: '/posts', controller: 'PostsController', action: 'index' },
+          { name: 'posts.show', method: 'GET', path: '/posts/:id', controller: 'PostsController', action: 'show' },
+        ],
+        views: ['posts/show'],
+        viewPaths: ['app/views/posts/show.html'],
+        conventions: {},
+      }),
+    });
+
+    assert.equal(exitCode, 0);
+    assert.equal(
+      outputs[0],
+      [
+        'Route: posts.show',
+        'Method: GET',
+        'Path: /posts/:id',
+        'Controller action: PostsController#show',
+        'Controller file: app/controllers/posts.controller.ts',
+        'Rendered view: posts/show',
+      ].join('\n'),
+    );
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test('runExplainRouteCommand resolves routes by route name and uses direct metadata view', async () => {
+  const outputs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    outputs.push(String(value));
+  };
+
+  try {
+    const exitCode = await runExplainRouteCommand(['health.show'], {
+      cwd: () => '/tmp/forge-demo',
+      readManifest: async () => ({
+        app: { name: 'demo' },
+        framework: { name: 'forge', version: '0.0.0' },
+        resources: [],
+        models: [],
+        modelFilePaths: [],
+        controllers: [],
+        controllerFilePaths: [],
+        routes: [
+          { name: 'health.show', method: 'GET', path: '/health', view: 'health/status.html' },
+        ],
+        views: ['health/status'],
+        viewPaths: ['app/views/health/status.html'],
+        conventions: {},
+      }),
+    });
+
+    assert.equal(exitCode, 0);
+    assert.match(outputs[0], /Route: health\.show/);
+    assert.match(outputs[0], /Controller action: \(none\)/);
+    assert.match(outputs[0], /Controller file: \(none\)/);
+    assert.match(outputs[0], /Rendered view: health\/status/);
   } finally {
     console.log = originalLog;
   }

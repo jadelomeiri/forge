@@ -47,8 +47,8 @@ const COMMAND_SPECS: Record<ForgeCommandName, Omit<ForgeCommand, 'args'>> = {
   },
   'explain route': {
     name: 'explain route',
-    description: 'Explain how a route resolves (stub).',
-    usage: 'forge explain route <path>',
+    description: 'Explain how a route resolves.',
+    usage: 'forge explain route <path-or-name>',
   },
 };
 
@@ -182,7 +182,7 @@ export function renderExplainHelp(): string {
     '',
     'Subjects:',
     formatCommandLine('model', 'Explain a Forge model (stub).'),
-    formatCommandLine('route', 'Explain how a route resolves (stub).'),
+    formatCommandLine('route', 'Explain how a route resolves.'),
   ].join('\n');
 }
 
