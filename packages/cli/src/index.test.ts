@@ -441,7 +441,7 @@ test('runDevCommand wires routes and boots the runtime server', async () => {
     assert.equal(exitCode, 0);
     assert.deepEqual(calls, ['loadRoutesConfig', 'registerRoutes', 'boot']);
     assert.equal(outputs.length, 1);
-    assert.match(outputs[0], /Forge dev server started\./);
+    assert.match(outputs[0], /✓ Dev server running/);
     assert.match(outputs[0], /http:\/\/127\.0\.0\.1:3000/);
   } finally {
     console.log = originalLog;

@@ -21,8 +21,6 @@ import {
 } from '@forge/runtime';
 import { parseCommand, renderCommandHelp } from './commands.js';
 
-type CommandHelpName = Parameters<typeof renderCommandHelp>[0];
-
 export function run(argv: string[] = process.argv.slice(2)): number | Promise<number> {
   const result = parseCommand(argv);
 
@@ -64,8 +62,8 @@ export function run(argv: string[] = process.argv.slice(2)): number | Promise<nu
     return runExplainRouteCommand(result.command.args);
   }
 
-  console.log(renderStubMessage(result.command.name, result.command.args));
-  return 0;
+  console.error(`Unknown command handler: ${result.command.name}`);
+  return 1;
 }
 
 async function runGenerateModelCommand(args: string[]): Promise<number> {
@@ -91,17 +89,17 @@ async function runGenerateModelCommand(args: string[]): Promise<number> {
       fieldArgs,
     });
 
-    console.log([
-      `Generated model: ${result.modelName}`,
-      `Model file: ${result.modelFilePath}`,
-      `Schema source: ${result.schemaPath}`,
+    console.log(renderSuccessMessage('Model generated', [
+      `Model: ${result.modelName}`,
+      `File: ${result.modelFilePath}`,
+      `Schema: ${result.schemaPath}`,
       `Manifest: ${result.manifestPath}`,
       '',
       'Fields:',
       ...(result.fields.length > 0
         ? result.fields.map((field) => `- ${field.name}:${field.type}`)
         : ['- (none)']),
-    ].join('\n'));
+    ]));
 
     return 0;
   } catch (error) {
@@ -138,8 +136,8 @@ async function runGenerateScaffoldCommand(args: string[]): Promise<number> {
       name,
     });
 
-    console.log([
-      `Generated scaffold: ${result.resourceName}`,
+    console.log(renderSuccessMessage('Scaffold generated', [
+      `Resource: ${result.resourceName}`,
       `Controller: ${result.controllerFilePath}`,
       `Routes: ${result.routesPath}`,
       `Manifest: ${result.manifestPath}`,
@@ -149,7 +147,7 @@ async function runGenerateScaffoldCommand(args: string[]): Promise<number> {
       '',
       'Views:',
       ...result.viewPaths.map((viewPath) => `- ${viewPath}`),
-    ].join('\n'));
+    ]));
 
     return 0;
   } catch (error) {
@@ -186,13 +184,20 @@ async function runNewCommand(args: string[]): Promise<number> {
       destinationRoot: process.cwd(),
     });
 
-    console.log([
-      `Created Forge app: ${result.appName}`,
+    console.log(renderSuccessMessage('Forge app created', [
+      `App: ${result.appName}`,
       `Location: ${result.appRoot}`,
       '',
       'Created files:',
       ...result.files.map((file: string) => `- ${file}`),
-    ].join('\n'));
+      '',
+      'Next steps:',
+      `- cd ${result.appName}`,
+      '- forge generate model Post title:string body:text',
+      '- forge generate scaffold Post',
+      '- forge migrate',
+      '- forge dev',
+    ]));
 
     return 0;
   } catch (error) {
@@ -292,12 +297,11 @@ export async function runDevCommand(
     await dependencies.registerRoutes(app, routes, projectRoot);
     const server = await dependencies.boot(app);
 
-    console.log([
-      'Forge dev server started.',
+    console.log(renderSuccessMessage('Dev server running', [
       `URL: http://${server.host}:${server.port}`,
       `Root: ${projectRoot}`,
       'Press Ctrl+C to stop.',
-    ].join('\n'));
+    ]));
 
     return 0;
   } catch (error) {
@@ -536,12 +540,11 @@ export async function runMigrateCommand(
 
     await dependencies.runCommand('npm', ['run', 'db:migrate'], { cwd: projectRoot });
 
-    console.log([
-      'Migration complete.',
+    console.log(renderSuccessMessage('Migration complete', [
       `Schema: ${schemaPath}`,
       `Database: ${path.join(projectRoot, 'db/dev.db')}`,
       'Workflow: npm run db:migrate',
-    ].join('\n'));
+    ]));
 
     return 0;
   } catch (error) {
@@ -736,17 +739,8 @@ function pluralize(value: string): string {
   return `${value}s`;
 }
 
-function renderStubMessage(name: CommandHelpName, args: string[]): string {
-  const formattedArgs = args.length > 0 ? args.join(', ') : '(none)';
-
-  return [
-    `Stub command: forge ${name}`,
-    `Args: ${formattedArgs}`,
-    '',
-    renderCommandHelp(name),
-    '',
-    'This command is part of the Task 2 CLI skeleton and does not perform framework behavior yet.',
-  ].join('\n');
+function renderSuccessMessage(summary: string, lines: string[]): string {
+  return [`✓ ${summary}`, ...lines].join('\n');
 }
 
 const exitCode = await run();
