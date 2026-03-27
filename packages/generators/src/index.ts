@@ -3,12 +3,16 @@ import path from 'node:path';
 
 import type { ForgeModelMetadata, ForgePrimitiveFieldType } from '@forge/core';
 import {
+  addControllerPathToManifest,
   addControllerToManifest,
+  addModelPathToManifest,
   addModelToManifest,
   addRouteDefinitionsToManifest,
+  addViewPathsToManifest,
   addViewsToManifest,
   readManifest,
   type ForgeManifestRoute,
+  upsertResourceInManifest,
   writeManifest,
 } from '@forge/manifest';
 
@@ -85,7 +89,7 @@ export async function generateModel(options: ForgeGenerateModelOptions): Promise
   await mkdir(path.dirname(modelFilePath), { recursive: true });
   await writeFile(modelFilePath, renderModelFile(modelName, fields), 'utf8');
   await updateSchemaFile(schemaPath, modelName, fields);
-  await updateManifestFile(manifestPath, modelName);
+  await updateManifestFile(manifestPath, modelName, toProjectRelativePath(options.projectRoot, modelFilePath));
 
   return {
     modelName,
@@ -137,7 +141,12 @@ export async function generateScaffold(
   await writeFile(e2eTestFilePath, renderScaffoldE2ETestFile(resource), 'utf8');
 
   await updateRoutesFile(routesPath, resource.routes);
-  await updateScaffoldManifestFile(manifestPath, resource);
+  await updateScaffoldManifestFile(
+    manifestPath,
+    resource,
+    toProjectRelativePath(options.projectRoot, controllerFilePath),
+    viewPaths.map((viewPath) => toProjectRelativePath(options.projectRoot, viewPath)),
+  );
 
   return {
     resourceName: resource.modelName,
@@ -632,18 +641,40 @@ async function updateSchemaFile(schemaPath: string, modelName: string, fields: F
   await writeFile(schemaPath, nextSchema, 'utf8');
 }
 
-async function updateManifestFile(manifestPath: string, modelName: string): Promise<void> {
+async function updateManifestFile(manifestPath: string, modelName: string, modelFilePath: string): Promise<void> {
   const manifest = await readManifest(manifestPath);
-  const nextManifest = addModelToManifest(manifest, modelName);
-  await writeManifest(manifestPath, nextManifest);
+  const withModel = addModelToManifest(manifest, modelName);
+  const withModelPath = addModelPathToManifest(withModel, modelFilePath);
+  const withResource = upsertResourceInManifest(withModelPath, {
+    name: pluralize(toFileBasename(modelName)),
+    model: modelName,
+    modelFilePath,
+  });
+  await writeManifest(manifestPath, withResource);
 }
 
-async function updateScaffoldManifestFile(manifestPath: string, resource: ForgeScaffoldResource): Promise<void> {
+async function updateScaffoldManifestFile(
+  manifestPath: string,
+  resource: ForgeScaffoldResource,
+  controllerFilePath: string,
+  viewPaths: string[],
+): Promise<void> {
   const manifest = await readManifest(manifestPath);
   const withController = addControllerToManifest(manifest, resource.controllerClassName);
-  const withRoutes = addRouteDefinitionsToManifest(withController, resource.routes);
+  const withControllerPath = addControllerPathToManifest(withController, controllerFilePath);
+  const withRoutes = addRouteDefinitionsToManifest(withControllerPath, resource.routes);
   const withViews = addViewsToManifest(withRoutes, resource.viewManifestEntries);
-  await writeManifest(manifestPath, withViews);
+  const withViewPaths = addViewPathsToManifest(withViews, viewPaths);
+  const withResource = upsertResourceInManifest(withViewPaths, {
+    name: resource.collectionPath,
+    model: resource.modelName,
+    modelFilePath: `app/models/${resource.modelFileBasename}.model.ts`,
+    controller: resource.controllerClassName,
+    controllerFilePath,
+    viewsPath: `app/views/${resource.collectionPath}`,
+    routeNames: resource.routes.map((route) => route.name),
+  });
+  await writeManifest(manifestPath, withResource);
 }
 
 async function updateRoutesFile(routesPath: string, routes: ForgeManifestRoute[]): Promise<void> {
@@ -667,6 +698,12 @@ async function updateRoutesFile(routesPath: string, routes: ForgeManifestRoute[]
   const nextRoutes = `${trimTrailingArrayComma(existingEntries)}${separator}${routeBlock}\n${suffix}`;
 
   await writeFile(routesPath, nextRoutes, 'utf8');
+}
+
+
+function toProjectRelativePath(projectRoot: string, absolutePath: string): string {
+  const normalizedRoot = projectRoot.endsWith('/') ? projectRoot : `${projectRoot}/`;
+  return absolutePath.startsWith(normalizedRoot) ? absolutePath.slice(normalizedRoot.length) : absolutePath;
 }
 
 function trimTrailingArrayComma(value: string): string {

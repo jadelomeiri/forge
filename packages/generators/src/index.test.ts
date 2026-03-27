@@ -113,6 +113,8 @@ test('generateModel writes the model file, appends schema, and updates the manif
 
   const manifest = JSON.parse(await readFile(path.join(projectRoot, '.forge/manifest.json'), 'utf8'));
   assert.deepEqual(manifest.models, ['Post']);
+  assert.deepEqual(manifest.modelFilePaths, ['app/models/post.model.ts']);
+  assert.deepEqual(manifest.resources, [{ name: 'posts', model: 'Post', modelFilePath: 'app/models/post.model.ts', routeNames: [] }]);
 });
 
 test('generateScaffold writes validation-aware controller, views, routes metadata, generated tests, and manifest entries', async () => {
@@ -155,11 +157,31 @@ test('generateScaffold writes validation-aware controller, views, routes metadat
 
   const manifest = JSON.parse(await readFile(path.join(projectRoot, '.forge/manifest.json'), 'utf8'));
   assert.deepEqual(manifest.controllers, ['PostsController']);
+  assert.deepEqual(manifest.controllerFilePaths, ['app/controllers/posts.controller.ts']);
   assert.deepEqual(manifest.views, ['home/index', 'layouts/app', 'layouts/auth', 'posts/_form', 'posts/edit', 'posts/index', 'posts/new', 'posts/show']);
+  assert.deepEqual(manifest.viewPaths, [
+    'app/views/home/index.html',
+    'app/views/layouts/app.html',
+    'app/views/layouts/auth.html',
+    'app/views/posts/_form.html',
+    'app/views/posts/edit.html',
+    'app/views/posts/index.html',
+    'app/views/posts/new.html',
+    'app/views/posts/show.html',
+  ]);
   assert.deepEqual(
     manifest.routes.map((route: { name: string }) => route.name),
     ['home.index', 'posts.index', 'posts.new', 'posts.create', 'posts.show', 'posts.edit', 'posts.update', 'posts.delete'],
   );
+  assert.deepEqual(manifest.resources, [{
+    name: 'posts',
+    model: 'Post',
+    modelFilePath: 'app/models/post.model.ts',
+    controller: 'PostsController',
+    controllerFilePath: 'app/controllers/posts.controller.ts',
+    viewsPath: 'app/views/posts',
+    routeNames: ['posts.create', 'posts.delete', 'posts.edit', 'posts.index', 'posts.new', 'posts.show', 'posts.update'],
+  }]);
 
   assert.equal(
     await readFile(path.join(projectRoot, 'tests/unit/post.model.test.ts'), 'utf8'),
@@ -173,6 +195,37 @@ test('generateScaffold writes validation-aware controller, views, routes metadat
     await readFile(path.join(projectRoot, 'tests/e2e/posts-smoke.test.ts'), 'utf8'),
     renderScaffoldE2ETestFile(resource),
   );
+});
+
+
+test('repeated generation keeps manifest deterministic and deduplicated', async () => {
+  const projectRoot = await createProject('forge-manifest-repeat-');
+
+  await generateModel({ projectRoot, modelName: 'Post', fieldArgs: ['title:string'] });
+  await generateModel({ projectRoot, modelName: 'Post', fieldArgs: ['title:string'] });
+
+  await writePostModel(projectRoot);
+  await generateScaffold({ projectRoot, name: 'Post' });
+  await generateScaffold({ projectRoot, name: 'Post' });
+
+  const manifest = JSON.parse(await readFile(path.join(projectRoot, '.forge/manifest.json'), 'utf8'));
+
+  assert.deepEqual(manifest.models, ['Post']);
+  assert.deepEqual(manifest.modelFilePaths, ['app/models/post.model.ts']);
+  assert.deepEqual(manifest.controllers, ['PostsController']);
+  assert.deepEqual(manifest.controllerFilePaths, ['app/controllers/posts.controller.ts']);
+  assert.equal(manifest.views.filter((view: string) => view.startsWith('posts/')).length, 5);
+  assert.equal(manifest.viewPaths.filter((viewPath: string) => viewPath.startsWith('app/views/posts/')).length, 5);
+  assert.equal(manifest.routes.filter((route: { name: string }) => route.name.startsWith('posts.')).length, 7);
+  assert.deepEqual(manifest.resources, [{
+    name: 'posts',
+    model: 'Post',
+    modelFilePath: 'app/models/post.model.ts',
+    controller: 'PostsController',
+    controllerFilePath: 'app/controllers/posts.controller.ts',
+    viewsPath: 'app/views/posts',
+    routeNames: ['posts.create', 'posts.delete', 'posts.edit', 'posts.index', 'posts.new', 'posts.show', 'posts.update'],
+  }]);
 });
 
 test('generated scaffold tests run against the current runtime behavior', async () => {
@@ -279,8 +332,12 @@ async function createProject(prefix: string): Promise<string> {
     JSON.stringify(
       {
         app: { name: 'demo-app' },
+        framework: { name: 'forge', version: '0.0.0' },
+        resources: [],
         models: [],
+        modelFilePaths: [],
         controllers: [],
+        controllerFilePaths: [],
         routes: [
           {
             name: 'home.index',
@@ -290,6 +347,7 @@ async function createProject(prefix: string): Promise<string> {
           },
         ],
         views: ['layouts/app', 'layouts/auth', 'home/index'],
+        viewPaths: ['app/views/home/index.html', 'app/views/layouts/app.html', 'app/views/layouts/auth.html'],
         conventions: {},
       },
       null,
