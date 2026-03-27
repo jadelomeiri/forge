@@ -56,6 +56,17 @@ test('registerRoutesFromConfig wires scaffold resource routes with controller/ac
   }
 });
 
+test('loadRoutesConfig reports file path, expected convention, and fix when routes export is invalid', async () => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), 'forge-resource-routing-invalid-'));
+  await mkdir(path.join(rootDir, 'config'), { recursive: true });
+  await writeFile(path.join(rootDir, 'config/routes.js'), 'export const routes = {};\n', 'utf8');
+
+  await assert.rejects(
+    () => loadRoutesConfig(rootDir),
+    /Invalid routes module export\.\nPath: .*config\/routes\.js\nExpected convention: export const routes = \[ \.\.\. \]\.\nTry:/,
+  );
+});
+
 async function createResourceApp() {
   const rootDir = await mkdtemp(path.join(os.tmpdir(), 'forge-resource-routing-'));
 

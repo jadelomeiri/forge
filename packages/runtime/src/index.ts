@@ -165,7 +165,14 @@ export async function loadRoutesConfig(rootDir = process.cwd()): Promise<readonl
   const routes = moduleValue.routes;
 
   if (!Array.isArray(routes)) {
-    throw new Error(`Expected ${routesModulePath} to export a routes array.`);
+    throw new Error(
+      [
+        'Invalid routes module export.',
+        `Path: ${routesModulePath}`,
+        'Expected convention: export const routes = [ ... ].',
+        'Try: define and export a routes array from config/routes.ts.',
+      ].join('\n'),
+    );
   }
 
   return routes as readonly ForgeRoutesConfigEntry[];
@@ -178,7 +185,12 @@ export function createControllerResolver(options: ForgeRegisterRoutesOptions = {
   return {
     async resolve(routeEntry) {
       if (!routeEntry.controller || !routeEntry.action) {
-        throw new Error(`Route ${routeEntry.name} is missing a controller or action.`);
+        throw new Error([
+          `Route "${routeEntry.name}" is missing controller or action metadata.`,
+          `Path: config/routes.ts`,
+          'Expected convention: route entries set both controller and action for controller-backed routes.',
+          `Try: { name: '${routeEntry.name}', method: '${routeEntry.method}', path: '${routeEntry.path}', controller: 'PostsController', action: 'index' }`,
+        ].join('\n'));
       }
 
       const ControllerClass = registeredControllers[routeEntry.controller] ?? await loadControllerClass(rootDir, routeEntry.controller);
@@ -186,7 +198,12 @@ export function createControllerResolver(options: ForgeRegisterRoutesOptions = {
       const actionValue = controllerInstance[routeEntry.action];
 
       if (typeof actionValue !== 'function') {
-        throw new Error(`Controller ${routeEntry.controller} does not define action ${routeEntry.action}.`);
+        throw new Error([
+          `Controller action not found: ${routeEntry.controller}#${routeEntry.action}.`,
+          `Path: app/controllers/${toKebabCase(routeEntry.controller.replace(/Controller$/, ''))}.controller.ts`,
+          'Expected convention: controller class defines a method matching route.action.',
+          `Try: add "${routeEntry.action}(...)" to ${routeEntry.controller}.`,
+        ].join('\n'));
       }
 
       return async (context) => actionValue.call(controllerInstance, context) as Promise<ForgeResponseData>;
@@ -611,7 +628,12 @@ async function resolveModulePath(rootDir: string, baseModulePath: string): Promi
     }
   }
 
-  throw new Error(`Could not find module ${baseModulePath} in ${rootDir}.`);
+  throw new Error([
+    `Could not find module "${baseModulePath}" in project root.`,
+    `Path: ${path.join(rootDir, baseModulePath)}.(ts|js|mjs|cjs)`,
+    'Expected convention: file exists with one of the supported extensions.',
+    'Try: create the missing file or fix rootDir when booting the app.',
+  ].join('\n'));
 }
 
 async function loadControllerClass(rootDir: string, controllerName: string): Promise<ForgeControllerClass> {
@@ -621,7 +643,12 @@ async function loadControllerClass(rootDir: string, controllerName: string): Pro
   const ControllerClass = moduleValue[controllerName];
 
   if (typeof ControllerClass !== 'function') {
-    throw new Error(`Expected ${controllerModulePath} to export ${controllerName}.`);
+    throw new Error([
+      'Controller export is missing or invalid.',
+      `Path: ${controllerModulePath}`,
+      `Expected convention: export class ${controllerName} { ... }`,
+      `Try: rename the exported controller class to ${controllerName}.`,
+    ].join('\n'));
   }
 
   return ControllerClass as ForgeControllerClass;

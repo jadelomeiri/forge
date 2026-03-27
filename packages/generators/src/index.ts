@@ -169,7 +169,11 @@ export function parseModelField(fieldArg: string): ForgeModelFieldInput {
 
   if (separatorIndex <= 0 || separatorIndex === fieldArg.length - 1) {
     throw new Error(
-      `Invalid field definition: ${fieldArg}. Expected format name:type using one of: ${SUPPORTED_FIELD_TYPES.join(', ')}`,
+      [
+        `Invalid field definition: "${fieldArg}".`,
+        `Expected convention: name:type using one of ${SUPPORTED_FIELD_TYPES.join(', ')}.`,
+        'Try: title:string',
+      ].join(' '),
     );
   }
 
@@ -177,11 +181,23 @@ export function parseModelField(fieldArg: string): ForgeModelFieldInput {
   const rawType = fieldArg.slice(separatorIndex + 1).trim();
 
   if (!isValidIdentifier(fieldName)) {
-    throw new Error(`Invalid field name: ${fieldName}. Use letters, numbers, and underscores, starting with a letter.`);
+    throw new Error(
+      [
+        `Invalid field name: "${fieldName}".`,
+        'Expected convention: letters, numbers, and underscores, starting with a letter.',
+        'Try: post_title:string',
+      ].join(' '),
+    );
   }
 
   if (!isSupportedFieldType(rawType)) {
-    throw new Error(`Unsupported field type: ${rawType}. Supported types: ${SUPPORTED_FIELD_TYPES.join(', ')}`);
+    throw new Error(
+      [
+        `Unsupported field type: "${rawType}".`,
+        `Expected convention: use one of ${SUPPORTED_FIELD_TYPES.join(', ')}.`,
+        'Try: published:boolean',
+      ].join(' '),
+    );
   }
 
   return {
@@ -605,7 +621,11 @@ export function parseModelMetadata(modelSource: string, modelName: string): Forg
   const startIndex = lines.findIndex((line) => line.includes(`defineModel('${modelName}', {`));
 
   if (startIndex === -1) {
-    throw new Error(`Could not find defineModel('${modelName}', { ... }) in model source.`);
+    throw new Error([
+      `Could not find defineModel('${modelName}', { ... }) in model source.`,
+      'Expected convention: export const ModelName = defineModel(\'ModelName\', { ... });',
+      `Try: ensure defineModel uses the same model name "${modelName}" and the standard Forge model shape.`,
+    ].join(' '));
   }
 
   const fields: ForgeScaffoldField[] = [];
@@ -714,7 +734,11 @@ function normalizeModelName(modelName: string): string {
   const trimmedModelName = modelName.trim();
 
   if (!/^[A-Z][A-Za-z0-9]*$/.test(trimmedModelName)) {
-    throw new Error('Model name must be PascalCase and singular, for example Post.');
+    throw new Error([
+      `Invalid model name: "${modelName}".`,
+      'Expected convention: PascalCase and singular (for example Post).',
+      'Try: Post, BlogPost.',
+    ].join(' '));
   }
 
   return trimmedModelName;
@@ -769,10 +793,26 @@ async function normalizeScaffoldName(projectRoot: string, name: string): Promise
 async function loadScaffoldFields(projectRoot: string, modelName: string, modelFileBasename: string): Promise<ForgeScaffoldField[]> {
   const modelFilePath = path.join(projectRoot, 'app/models', `${modelFileBasename}.model.ts`);
   const modelSource = await readFile(modelFilePath, 'utf8');
-  const metadata = parseModelMetadata(modelSource, modelName);
+  let metadata: ForgeModelMetadata;
+
+  try {
+    metadata = parseModelMetadata(modelSource, modelName);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : 'Unknown error';
+    throw new Error([
+      'Could not read model metadata for scaffold generation.',
+      `Path: ${modelFilePath}`,
+      detail,
+    ].join('\n'));
+  }
 
   if (metadata.fields.length === 0) {
-    throw new Error(`Model ${modelName} does not define any fields to scaffold.`);
+    throw new Error([
+      `Model "${modelName}" does not define any fields to scaffold.`,
+      `Path: ${modelFilePath}`,
+      'Expected convention: define at least one field in defineModel(...).',
+      `Try: add fields like title: field.string() to ${modelFilePath}.`,
+    ].join('\n'));
   }
 
   return metadata.fields.map((field) => ({
@@ -787,7 +827,11 @@ function parseScaffoldFieldLine(line: string): ForgeScaffoldField {
   const match = line.match(/^(\w+):\s*field\.(string|text|boolean|integer|decimal|date)\(([^)]*)\),?$/);
 
   if (!match) {
-    throw new Error(`Unsupported model field definition for scaffolding: ${line}`);
+    throw new Error([
+      `Unsupported model field definition for scaffolding: ${line}`,
+      'Expected convention: fieldName: field.type(options),',
+      'Try: title: field.string({ required: true }),',
+    ].join(' '));
   }
 
   const [, name, type, rawOptions] = match;

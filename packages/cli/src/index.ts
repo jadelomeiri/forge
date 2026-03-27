@@ -72,7 +72,15 @@ async function runGenerateModelCommand(args: string[]): Promise<number> {
   const [modelName, ...fieldArgs] = args;
 
   if (!modelName) {
-    console.error('Missing model name.\n\n' + renderCommandHelp('generate model'));
+    console.error(
+      [
+        'Failed to generate model: missing model name.',
+        'Expected convention: forge generate model <ModelName> [field:type ...].',
+        'Try: forge generate model Post title:string body:text',
+        '',
+        renderCommandHelp('generate model'),
+      ].join('\n'),
+    );
     return 1;
   }
 
@@ -107,7 +115,15 @@ async function runGenerateScaffoldCommand(args: string[]): Promise<number> {
   const [name, ...extraArgs] = args;
 
   if (!name) {
-    console.error('Missing scaffold name.\n\n' + renderCommandHelp('generate scaffold'));
+    console.error(
+      [
+        'Failed to generate scaffold: missing model name.',
+        'Expected convention: forge generate scaffold <ModelName>.',
+        'Try: forge generate scaffold Post',
+        '',
+        renderCommandHelp('generate scaffold'),
+      ].join('\n'),
+    );
     return 1;
   }
 
@@ -147,7 +163,15 @@ async function runNewCommand(args: string[]): Promise<number> {
   const [appName, ...extraArgs] = args;
 
   if (!appName) {
-    console.error('Missing app name.\n\n' + renderCommandHelp('new'));
+    console.error(
+      [
+        'Failed to create app: missing app name.',
+        'Expected convention: forge new <app-name>.',
+        'Try: forge new blog-app',
+        '',
+        renderCommandHelp('new'),
+      ].join('\n'),
+    );
     return 1;
   }
 
@@ -290,7 +314,15 @@ export async function runExplainModelCommand(
   const [modelName, ...extraArgs] = args;
 
   if (!modelName) {
-    console.error('Missing model name.\n\n' + renderCommandHelp('explain model'));
+    console.error(
+      [
+        'Failed to explain model: missing model name.',
+        'Expected convention: forge explain model <ModelName>.',
+        'Try: forge explain model Post',
+        '',
+        renderCommandHelp('explain model'),
+      ].join('\n'),
+    );
     return 1;
   }
 
@@ -307,14 +339,24 @@ export async function runExplainModelCommand(
   try {
     manifest = await dependencies.readManifest(manifestPath);
   } catch {
-    console.error(`Failed to explain model: expected Forge manifest at ${manifestPath}`);
+    console.error([
+      'Failed to explain model: Forge manifest file is missing or unreadable.',
+      `Path: ${manifestPath}`,
+      'Expected convention: .forge/manifest.json exists in the project root.',
+      'Try: run forge new to create a Forge app, or re-run the generator that should create the manifest.',
+    ].join('\n'));
     return 1;
   }
 
   const modelInfo = resolveModelInfo(modelName, manifest);
 
   if (!modelInfo) {
-    console.error(`Failed to explain model: model ${modelName} was not found in ${manifestPath}`);
+    console.error([
+      `Failed to explain model: model "${modelName}" was not found in the manifest.`,
+      `Path: ${manifestPath}`,
+      'Expected convention: the model is listed in .forge/manifest.json (models/resources).',
+      `Try: run forge generate model ${modelName} ... before explain.`,
+    ].join('\n'));
     return 1;
   }
 
@@ -323,7 +365,12 @@ export async function runExplainModelCommand(
   try {
     await dependencies.access(modelFilePath);
   } catch {
-    console.error(`Failed to explain model: expected model file at ${modelFilePath}`);
+    console.error([
+      'Failed to explain model: model file is missing.',
+      `Path: ${modelFilePath}`,
+      'Expected convention: app/models/<model-name>.model.ts exists for manifest entries.',
+      `Try: restore the file or re-run forge generate model ${modelName} ...`,
+    ].join('\n'));
     return 1;
   }
 
@@ -374,7 +421,15 @@ export async function runExplainRouteCommand(
   const [pathOrName, ...extraArgs] = args;
 
   if (!pathOrName) {
-    console.error('Missing route path or name.\n\n' + renderCommandHelp('explain route'));
+    console.error(
+      [
+        'Failed to explain route: missing route path or name.',
+        'Expected convention: forge explain route <route-name|/path>.',
+        'Try: forge explain route posts.show',
+        '',
+        renderCommandHelp('explain route'),
+      ].join('\n'),
+    );
     return 1;
   }
 
@@ -391,14 +446,24 @@ export async function runExplainRouteCommand(
   try {
     manifest = await dependencies.readManifest(manifestPath);
   } catch {
-    console.error(`Failed to explain route: expected Forge manifest at ${manifestPath}`);
+    console.error([
+      'Failed to explain route: Forge manifest file is missing or unreadable.',
+      `Path: ${manifestPath}`,
+      'Expected convention: .forge/manifest.json exists in the project root.',
+      'Try: run forge new to create a Forge app, or re-run generators to rebuild the manifest.',
+    ].join('\n'));
     return 1;
   }
 
   const route = resolveRoute(pathOrName, manifest.routes);
 
   if (!route) {
-    console.error(`Failed to explain route: route ${pathOrName} was not found in ${manifestPath}`);
+    console.error([
+      `Failed to explain route: route "${pathOrName}" was not found.`,
+      `Path: ${manifestPath}`,
+      'Expected convention: route exists in manifest.routes with a valid name/path.',
+      'Try: run forge generate scaffold <ModelName> or check config/routes.ts and regenerate manifest entries.',
+    ].join('\n'));
     return 1;
   }
 
@@ -434,14 +499,24 @@ export async function runMigrateCommand(
   try {
     await dependencies.access(schemaPath);
   } catch {
-    console.error(`Failed to migrate: expected Prisma schema at ${schemaPath}`);
+    console.error([
+      'Failed to migrate: Prisma schema file is missing.',
+      `Path: ${schemaPath}`,
+      'Expected convention: db/schema.prisma exists in a Forge app.',
+      'Try: run forge new to create a new app skeleton, or restore db/schema.prisma.',
+    ].join('\n'));
     return 1;
   }
 
   try {
     await dependencies.access(packageJsonPath);
   } catch {
-    console.error(`Failed to migrate: expected app package.json at ${packageJsonPath}`);
+    console.error([
+      'Failed to migrate: app package.json is missing.',
+      `Path: ${packageJsonPath}`,
+      'Expected convention: package.json exists at the project root.',
+      'Try: run this command from your Forge app root directory.',
+    ].join('\n'));
     return 1;
   }
 
@@ -451,7 +526,12 @@ export async function runMigrateCommand(
     };
 
     if (!packageJson.scripts || typeof packageJson.scripts['db:migrate'] !== 'string') {
-      throw new Error('Expected package.json to define a db:migrate script.');
+      throw new Error([
+        'Missing db:migrate script in package.json.',
+        `Path: ${packageJsonPath}`,
+        "Expected convention: package.json scripts includes \"db:migrate\".",
+        'Try: add "db:migrate": "prisma db push --schema db/schema.prisma" to scripts.',
+      ].join('\n'));
     }
 
     await dependencies.runCommand('npm', ['run', 'db:migrate'], { cwd: projectRoot });
