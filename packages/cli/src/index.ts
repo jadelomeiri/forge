@@ -13,6 +13,12 @@ import path from 'node:path';
 import { createForgeApp } from '@forge/create-forge-app';
 import { generateModel, generateScaffold, parseModelMetadata } from '@forge/generators';
 import { readManifest, type ForgeManifest } from '@forge/manifest';
+import {
+  ForgeApp,
+  loadRoutesConfig,
+  registerRoutesFromConfig,
+  type ForgeRoutesConfigEntry,
+} from '@forge/runtime';
 import { parseCommand, renderCommandHelp } from './commands.js';
 
 type CommandHelpName = Parameters<typeof renderCommandHelp>[0];
@@ -40,6 +46,10 @@ export function run(argv: string[] = process.argv.slice(2)): number | Promise<nu
 
   if (result.command.name === 'generate scaffold') {
     return runGenerateScaffoldCommand(result.command.args);
+  }
+
+  if (result.command.name === 'dev') {
+    return runDevCommand(result.command.args);
   }
 
   if (result.command.name === 'migrate') {
@@ -187,6 +197,13 @@ export type ForgeExplainRouteDependencies = {
   readManifest(path: string): Promise<ForgeManifest>;
 };
 
+export type ForgeDevDependencies = {
+  cwd(): string;
+  loadRoutesConfig(rootDir: string): Promise<readonly ForgeRoutesConfigEntry[]>;
+  registerRoutes(app: ForgeApp, routes: readonly ForgeRoutesConfigEntry[], rootDir: string): Promise<void>;
+  boot(app: ForgeApp): Promise<{ host: string; port: number }>;
+};
+
 const defaultMigrateDependencies: ForgeMigrateDependencies = {
   cwd: () => process.cwd(),
   readFile,
@@ -222,6 +239,49 @@ const defaultExplainRouteDependencies: ForgeExplainRouteDependencies = {
   cwd: () => process.cwd(),
   readManifest,
 };
+
+const defaultDevDependencies: ForgeDevDependencies = {
+  cwd: () => process.cwd(),
+  loadRoutesConfig,
+  async registerRoutes(app, routes, rootDir) {
+    await registerRoutesFromConfig(app, routes, { rootDir });
+  },
+  boot(app) {
+    return app.boot({ host: '127.0.0.1', port: 3000 });
+  },
+};
+
+export async function runDevCommand(
+  args: string[],
+  dependencies: ForgeDevDependencies = defaultDevDependencies,
+): Promise<number> {
+  if (args.length > 0) {
+    console.error(`Unexpected arguments: ${args.join(', ')}\n\n${renderCommandHelp('dev')}`);
+    return 1;
+  }
+
+  const projectRoot = dependencies.cwd();
+  const app = new ForgeApp({ rootDir: projectRoot });
+
+  try {
+    const routes = await dependencies.loadRoutesConfig(projectRoot);
+    await dependencies.registerRoutes(app, routes, projectRoot);
+    const server = await dependencies.boot(app);
+
+    console.log([
+      'Forge dev server started.',
+      `URL: http://${server.host}:${server.port}`,
+      `Root: ${projectRoot}`,
+      'Press Ctrl+C to stop.',
+    ].join('\n'));
+
+    return 0;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`Failed to start dev server: ${message}`);
+    return 1;
+  }
+}
 
 export async function runExplainModelCommand(
   args: string[],

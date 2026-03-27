@@ -1,0 +1,20 @@
+<form method="POST" action="{{formAction}}">
+  <div>{{errorsHeading}}</div>
+  <div>{{errorsSummary}}</div>
+  <div>{{titleError}}</div>
+  <label>
+    Post title
+    <input type="text" name="title" value="{{title}}">
+  </label>
+  <div>{{bodyError}}</div>
+  <label>
+    Post body
+    <textarea name="body">{{body}}</textarea>
+  </label>
+  <div>{{publishedError}}</div>
+  <label>
+    <input type="checkbox" name="published" value="true" {{publishedChecked}}>
+    Post published
+  </label>
+  <button type="submit">{{submitLabel}}</button>
+</form>

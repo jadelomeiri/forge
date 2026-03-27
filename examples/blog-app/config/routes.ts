@@ -1,0 +1,57 @@
+export const routes = [
+  {
+    name: 'home.index',
+    method: 'GET',
+    path: '/',
+    view: 'home/index',
+  },
+  {
+    name: 'posts.index',
+    method: 'GET',
+    path: '/posts',
+    controller: 'PostsController',
+    action: 'index',
+  },
+  {
+    name: 'posts.new',
+    method: 'GET',
+    path: '/posts/new',
+    controller: 'PostsController',
+    action: 'new',
+  },
+  {
+    name: 'posts.create',
+    method: 'POST',
+    path: '/posts',
+    controller: 'PostsController',
+    action: 'create',
+  },
+  {
+    name: 'posts.show',
+    method: 'GET',
+    path: '/posts/:id',
+    controller: 'PostsController',
+    action: 'show',
+  },
+  {
+    name: 'posts.edit',
+    method: 'GET',
+    path: '/posts/:id/edit',
+    controller: 'PostsController',
+    action: 'edit',
+  },
+  {
+    name: 'posts.update',
+    method: 'POST',
+    path: '/posts/:id/update',
+    controller: 'PostsController',
+    action: 'update',
+  },
+  {
+    name: 'posts.delete',
+    method: 'POST',
+    path: '/posts/:id/delete',
+    controller: 'PostsController',
+    action: 'delete',
+  },
+] as const;
