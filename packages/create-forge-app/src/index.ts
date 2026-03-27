@@ -94,8 +94,15 @@ function createManifest(appName: string) {
     app: {
       name: appName,
     },
+    framework: {
+      name: 'forge',
+      version: '0.0.0',
+    },
+    resources: [],
     models: [],
+    modelFilePaths: [],
     controllers: [],
+    controllerFilePaths: [],
     routes: [
       {
         name: 'home.index',
@@ -105,11 +112,27 @@ function createManifest(appName: string) {
       },
     ],
     views: ['layouts/app', 'layouts/auth', 'home/index'],
+    viewPaths: ['app/views/home/index.html', 'app/views/layouts/app.html', 'app/views/layouts/auth.html'],
     conventions: {
       structure: ['app', 'config', 'db', 'public', 'tests', '.forge'],
-      controllers: 'plural',
-      models: 'singular',
-      views: 'plural folders',
+      models: {
+        naming: 'singular',
+        fileSuffix: '.model.ts',
+        directory: 'app/models',
+      },
+      controllers: {
+        naming: 'plural',
+        fileSuffix: '.controller.ts',
+        directory: 'app/controllers',
+      },
+      views: {
+        resourceFolders: 'plural',
+        directory: 'app/views',
+      },
+      routes: {
+        style: 'resourceful',
+        namespaced: true,
+      },
     },
   };
 }
