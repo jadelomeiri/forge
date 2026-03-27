@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
-import { runExplainModelCommand, runExplainRouteCommand, runMigrateCommand } from './index.js';
+import { runDevCommand, runExplainModelCommand, runExplainRouteCommand, runMigrateCommand } from './index.js';
 
 test('runMigrateCommand runs the generated app db:migrate workflow', async () => {
   const commandCalls: Array<{ command: string; args: string[]; cwd: string }> = [];
@@ -344,5 +344,60 @@ test('runExplainRouteCommand resolves routes by route name and uses direct metad
     assert.match(outputs[0], /Rendered view: health\/status/);
   } finally {
     console.log = originalLog;
+  }
+});
+
+test('runDevCommand wires routes and boots the runtime server', async () => {
+  const outputs: string[] = [];
+  const originalLog = console.log;
+  console.log = (value?: unknown) => {
+    outputs.push(String(value));
+  };
+
+  try {
+    const routeList = [{ name: 'home.index', method: 'GET', path: '/', view: 'home/index' }] as const;
+    const calls: string[] = [];
+
+    const exitCode = await runDevCommand([], {
+      cwd: () => '/tmp/forge-demo',
+      loadRoutesConfig: async (rootDir) => {
+        assert.equal(rootDir, '/tmp/forge-demo');
+        calls.push('loadRoutesConfig');
+        return routeList;
+      },
+      registerRoutes: async (_app, routes, rootDir) => {
+        assert.equal(rootDir, '/tmp/forge-demo');
+        assert.deepEqual(routes, routeList);
+        calls.push('registerRoutes');
+      },
+      boot: async () => {
+        calls.push('boot');
+        return { host: '127.0.0.1', port: 3000 };
+      },
+    });
+
+    assert.equal(exitCode, 0);
+    assert.deepEqual(calls, ['loadRoutesConfig', 'registerRoutes', 'boot']);
+    assert.equal(outputs.length, 1);
+    assert.match(outputs[0], /Forge dev server started\./);
+    assert.match(outputs[0], /http:\/\/127\.0\.0\.1:3000/);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test('runDevCommand rejects unexpected arguments', async () => {
+  const errors: string[] = [];
+  const originalError = console.error;
+  console.error = (value?: unknown) => {
+    errors.push(String(value));
+  };
+
+  try {
+    const exitCode = await runDevCommand(['--port', '5000']);
+    assert.equal(exitCode, 1);
+    assert.match(errors.join('\n'), /Unexpected arguments/);
+  } finally {
+    console.error = originalError;
   }
 });

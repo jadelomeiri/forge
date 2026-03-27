@@ -1,0 +1,145 @@
+{
+  "app": {
+    "name": "blog-app"
+  },
+  "framework": {
+    "name": "forge",
+    "version": "0.0.0"
+  },
+  "resources": [
+    {
+      "name": "posts",
+      "routeNames": [
+        "posts.create",
+        "posts.delete",
+        "posts.edit",
+        "posts.index",
+        "posts.new",
+        "posts.show",
+        "posts.update"
+      ],
+      "model": "Post",
+      "modelFilePath": "app/models/post.model.ts",
+      "controller": "PostsController",
+      "controllerFilePath": "app/controllers/posts.controller.ts",
+      "viewsPath": "app/views/posts"
+    }
+  ],
+  "models": [
+    "Post"
+  ],
+  "modelFilePaths": [
+    "app/models/post.model.ts"
+  ],
+  "controllers": [
+    "PostsController"
+  ],
+  "controllerFilePaths": [
+    "app/controllers/posts.controller.ts"
+  ],
+  "routes": [
+    {
+      "name": "home.index",
+      "method": "GET",
+      "path": "/",
+      "view": "home/index"
+    },
+    {
+      "name": "posts.index",
+      "method": "GET",
+      "path": "/posts",
+      "controller": "PostsController",
+      "action": "index"
+    },
+    {
+      "name": "posts.new",
+      "method": "GET",
+      "path": "/posts/new",
+      "controller": "PostsController",
+      "action": "new"
+    },
+    {
+      "name": "posts.create",
+      "method": "POST",
+      "path": "/posts",
+      "controller": "PostsController",
+      "action": "create"
+    },
+    {
+      "name": "posts.show",
+      "method": "GET",
+      "path": "/posts/:id",
+      "controller": "PostsController",
+      "action": "show"
+    },
+    {
+      "name": "posts.edit",
+      "method": "GET",
+      "path": "/posts/:id/edit",
+      "controller": "PostsController",
+      "action": "edit"
+    },
+    {
+      "name": "posts.update",
+      "method": "POST",
+      "path": "/posts/:id/update",
+      "controller": "PostsController",
+      "action": "update"
+    },
+    {
+      "name": "posts.delete",
+      "method": "POST",
+      "path": "/posts/:id/delete",
+      "controller": "PostsController",
+      "action": "delete"
+    }
+  ],
+  "views": [
+    "home/index",
+    "layouts/app",
+    "layouts/auth",
+    "posts/_form",
+    "posts/edit",
+    "posts/index",
+    "posts/new",
+    "posts/show"
+  ],
+  "viewPaths": [
+    "app/views/home/index.html",
+    "app/views/layouts/app.html",
+    "app/views/layouts/auth.html",
+    "app/views/posts/_form.html",
+    "app/views/posts/edit.html",
+    "app/views/posts/index.html",
+    "app/views/posts/new.html",
+    "app/views/posts/show.html"
+  ],
+  "conventions": {
+    "structure": [
+      "app",
+      "config",
+      "db",
+      "public",
+      "tests",
+      ".forge"
+    ],
+    "models": {
+      "naming": "singular",
+      "fileSuffix": ".model.ts",
+      "directory": "app/models"
+    },
+    "controllers": {
+      "naming": "plural",
+      "fileSuffix": ".controller.ts",
+      "directory": "app/controllers"
+    },
+    "views": {
+      "resourceFolders": "plural",
+      "directory": "app/views"
+    },
+    "routes": {
+      "style": "resourceful",
+      "namespaced": true
+    }
+  }
+}

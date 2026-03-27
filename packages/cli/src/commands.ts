@@ -22,7 +22,7 @@ const COMMAND_SPECS: Record<ForgeCommandName, Omit<ForgeCommand, 'args'>> = {
   },
   dev: {
     name: 'dev',
-    description: 'Start the Forge development server (stub).',
+    description: 'Start the Forge development server.',
     usage: 'forge dev',
   },
   migrate: {
