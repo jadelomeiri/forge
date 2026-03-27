@@ -32,18 +32,18 @@ const COMMAND_SPECS: Record<ForgeCommandName, Omit<ForgeCommand, 'args'>> = {
   },
   'generate model': {
     name: 'generate model',
-    description: 'Generate a model file (stub).',
-    usage: 'forge generate model <name> [fields...]',
+    description: 'Generate a model file and update schema + manifest.',
+    usage: 'forge generate model <ModelName> [field:type ...]',
   },
   'generate scaffold': {
     name: 'generate scaffold',
-    description: 'Generate CRUD scaffolding (stub).',
-    usage: 'forge generate scaffold <name>',
+    description: 'Generate CRUD controller, views, routes, tests, and manifest entries.',
+    usage: 'forge generate scaffold <ModelName>',
   },
   'explain model': {
     name: 'explain model',
-    description: 'Explain a Forge model (stub).',
-    usage: 'forge explain model <name>',
+    description: 'Explain model fields, defaults, validations, and scaffold linkage.',
+    usage: 'forge explain model <ModelName>',
   },
   'explain route': {
     name: 'explain route',
@@ -73,10 +73,18 @@ export function parseCommand(argv: string[]): ParseResult {
   }
 
   if (first === 'dev') {
+    if (isHelpFlag(second)) {
+      return { kind: 'help', text: renderCommandHelp('dev') };
+    }
+
     return commandResult('dev', [second, third, ...rest].filter(isDefined));
   }
 
   if (first === 'migrate') {
+    if (isHelpFlag(second)) {
+      return { kind: 'help', text: renderCommandHelp('migrate') };
+    }
+
     return commandResult('migrate', [second, third, ...rest].filter(isDefined));
   }
 
@@ -168,8 +176,8 @@ export function renderGenerateHelp(): string {
     '  forge generate <target> [args]',
     '',
     'Targets:',
-    formatCommandLine('model', 'Generate a model file (stub).'),
-    formatCommandLine('scaffold', 'Generate CRUD scaffolding (stub).'),
+    formatCommandLine('model', 'Generate a model file and update schema + manifest.'),
+    formatCommandLine('scaffold', 'Generate CRUD controller, views, routes, tests, and manifest entries.'),
   ].join('\n');
 }
 
@@ -181,7 +189,7 @@ export function renderExplainHelp(): string {
     '  forge explain <subject> [args]',
     '',
     'Subjects:',
-    formatCommandLine('model', 'Explain a Forge model (stub).'),
+    formatCommandLine('model', 'Explain model fields, defaults, validations, and scaffold linkage.'),
     formatCommandLine('route', 'Explain how a route resolves.'),
   ].join('\n');
 }
