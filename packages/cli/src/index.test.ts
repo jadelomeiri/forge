@@ -51,7 +51,9 @@ test('runMigrateCommand fails when the generated app db:migrate script is missin
     });
 
     assert.equal(exitCode, 1);
-    assert.match(errors.join('\n'), /Expected package\.json to define a db:migrate script/);
+    assert.match(errors.join('\n'), /Missing db:migrate script in package\.json/);
+    assert.match(errors.join('\n'), /Path: \/tmp\/forge-demo\/package\.json/);
+    assert.match(errors.join('\n'), /Try: add "db:migrate"/);
   } finally {
     console.error = originalError;
   }
@@ -77,7 +79,7 @@ test('runMigrateCommand fails when db/schema.prisma is missing', async () => {
     });
 
     assert.equal(exitCode, 1);
-    assert.match(errors.join('\n'), /expected Prisma schema/);
+    assert.match(errors.join('\n'), /Prisma schema file is missing/);
   } finally {
     console.error = originalError;
   }
@@ -344,6 +346,66 @@ test('runExplainRouteCommand resolves routes by route name and uses direct metad
     assert.match(outputs[0], /Rendered view: health\/status/);
   } finally {
     console.log = originalLog;
+  }
+});
+
+test('runExplainModelCommand reports actionable details when manifest is missing', async () => {
+  const errors: string[] = [];
+  const originalError = console.error;
+  console.error = (value?: unknown) => {
+    errors.push(String(value));
+  };
+
+  try {
+    const exitCode = await runExplainModelCommand(['Post'], {
+      cwd: () => '/tmp/forge-demo',
+      access: async () => undefined,
+      readFile: async () => '',
+      readManifest: async () => {
+        throw new Error('missing');
+      },
+    });
+
+    assert.equal(exitCode, 1);
+    assert.match(errors.join('\n'), /Forge manifest file is missing or unreadable/);
+    assert.match(errors.join('\n'), /Path: \/tmp\/forge-demo\/\.forge\/manifest\.json/);
+    assert.match(errors.join('\n'), /Expected convention: \.forge\/manifest\.json exists/);
+  } finally {
+    console.error = originalError;
+  }
+});
+
+test('runExplainRouteCommand reports actionable details when route cannot be found', async () => {
+  const errors: string[] = [];
+  const originalError = console.error;
+  console.error = (value?: unknown) => {
+    errors.push(String(value));
+  };
+
+  try {
+    const exitCode = await runExplainRouteCommand(['posts.show'], {
+      cwd: () => '/tmp/forge-demo',
+      readManifest: async () => ({
+        app: { name: 'demo' },
+        framework: { name: 'forge', version: '0.0.0' },
+        resources: [],
+        models: [],
+        modelFilePaths: [],
+        controllers: [],
+        controllerFilePaths: [],
+        routes: [],
+        views: [],
+        viewPaths: [],
+        conventions: {},
+      }),
+    });
+
+    assert.equal(exitCode, 1);
+    assert.match(errors.join('\n'), /route "posts\.show" was not found/);
+    assert.match(errors.join('\n'), /Path: \/tmp\/forge-demo\/\.forge\/manifest\.json/);
+    assert.match(errors.join('\n'), /Expected convention: route exists in manifest\.routes/);
+  } finally {
+    console.error = originalError;
   }
 });
 

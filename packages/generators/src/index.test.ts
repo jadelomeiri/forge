@@ -34,6 +34,29 @@ test('parseModelFields supports primitive name:type pairs', () => {
   ]);
 });
 
+test('parseModelFields reports convention and fix for invalid field definitions', () => {
+  try {
+    parseModelFields(['title']);
+    assert.equal('expected parseModelFields to throw', 'threw');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    assert.match(message, /Invalid field definition: "title"/);
+    assert.match(message, /Expected convention: name:type/);
+    assert.match(message, /Try: title:string/);
+  }
+});
+
+test('parseModelMetadata reports expected convention when defineModel block is missing', () => {
+  try {
+    parseModelMetadata("export const Post = {};\n", 'Post');
+    assert.equal('expected parseModelMetadata to throw', 'threw');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    assert.match(message, /Could not find defineModel\('Post'/);
+    assert.match(message, /Expected convention: export const ModelName = defineModel/);
+  }
+});
+
 test('parseModelMetadata reads required fields and defaults from model source', () => {
   assert.deepEqual(
     parseModelMetadata(
