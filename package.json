@@ -8,7 +8,11 @@
   "scripts": {
     "build": "tsc -b",
     "clean": "tsc -b --clean",
-    "typecheck": "tsc -b --pretty false"
+    "typecheck": "tsc -b --pretty false",
+    "test": "npm run test:packages && npm run test:example",
+    "test:packages": "npm run -w packages/core test && npm run -w packages/runtime test && npm run -w packages/generators test",
+    "test:example": "npm test --prefix examples/blog-app",
+    "test:smoke": "bash ./scripts/ci-smoke.sh"
   },
   "devDependencies": {
     "typescript": "^5.9.2"
