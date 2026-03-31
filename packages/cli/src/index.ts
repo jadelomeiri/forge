@@ -7,8 +7,9 @@ declare const process: {
 };
 
 import { spawn } from 'node:child_process';
-import { access, readFile } from 'node:fs/promises';
+import { access, lstat, mkdir, readFile, readlink, realpath, rm, symlink } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { createForgeApp } from '@forge/create-forge-app';
 import { generateModel, generateScaffold, parseModelMetadata } from '@forge/generators';
@@ -228,6 +229,7 @@ export type ForgeExplainRouteDependencies = {
 
 export type ForgeDevDependencies = {
   cwd(): string;
+  prepareProject?(projectRoot: string): Promise<void>;
   loadRoutesConfig(rootDir: string): Promise<readonly ForgeRoutesConfigEntry[]>;
   registerRoutes(app: ForgeApp, routes: readonly ForgeRoutesConfigEntry[], rootDir: string): Promise<void>;
   boot(app: ForgeApp): Promise<{ host: string; port: number }>;
@@ -271,6 +273,7 @@ const defaultExplainRouteDependencies: ForgeExplainRouteDependencies = {
 
 const defaultDevDependencies: ForgeDevDependencies = {
   cwd: () => process.cwd(),
+  prepareProject: ensureGeneratedAppPackageLinks,
   loadRoutesConfig,
   async registerRoutes(app, routes, rootDir) {
     await registerRoutesFromConfig(app, routes, { rootDir });
@@ -290,6 +293,9 @@ export async function runDevCommand(
   }
 
   const projectRoot = dependencies.cwd();
+  if (dependencies.prepareProject) {
+    await dependencies.prepareProject(projectRoot);
+  }
   const app = new ForgeApp({ rootDir: projectRoot });
 
   try {
@@ -309,6 +315,49 @@ export async function runDevCommand(
     console.error(`Failed to start dev server: ${message}`);
     return 1;
   }
+}
+
+export async function ensureGeneratedAppPackageLinks(projectRoot: string): Promise<void> {
+  const cliDistDir = path.dirname(fileURLToPath(import.meta.url));
+  const workspacePackagesDir = path.resolve(cliDistDir, '..', '..');
+  const forgeScopeDir = path.join(projectRoot, 'node_modules', '@forge');
+  const linkedPackages: Array<{ packageName: string; packagePath: string }> = [
+    { packageName: 'core', packagePath: path.join(workspacePackagesDir, 'core') },
+    { packageName: 'runtime', packagePath: path.join(workspacePackagesDir, 'runtime') },
+  ];
+
+  await mkdir(forgeScopeDir, { recursive: true });
+
+  for (const linkedPackage of linkedPackages) {
+    await access(path.join(linkedPackage.packagePath, 'dist', 'index.js'));
+    const linkPath = path.join(forgeScopeDir, linkedPackage.packageName);
+    await ensureDirectorySymlink(linkPath, linkedPackage.packagePath);
+  }
+}
+
+async function ensureDirectorySymlink(linkPath: string, targetPath: string): Promise<void> {
+  const normalizedTargetPath = path.resolve(targetPath);
+
+  try {
+    const stats = await lstat(linkPath);
+
+    if (stats.isSymbolicLink()) {
+      const existingLink = await readlink(linkPath);
+      const resolvedExistingTarget = path.resolve(path.dirname(linkPath), existingLink);
+      const canonicalExistingTarget = await realpath(resolvedExistingTarget);
+      const canonicalTargetPath = await realpath(normalizedTargetPath);
+
+      if (canonicalExistingTarget === canonicalTargetPath) {
+        return;
+      }
+    }
+
+    await rm(linkPath, { recursive: true, force: true });
+  } catch {
+    // Create link when it does not exist.
+  }
+
+  await symlink(normalizedTargetPath, linkPath, 'dir');
 }
 
 export async function runExplainModelCommand(
